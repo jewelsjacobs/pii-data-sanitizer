@@ -30,3 +30,9 @@ files.zip
 # Tool caches
 .pytest_cache/
 .ruff_cache/
+
+# Ground-truth fixtures stay local-only — synthetic-shaped PII still pattern-matches
+# as credential / address / SSN data and shouldn't end up on a public-facing host.
+# The README is kept as a generic scaffold so future-you can rebuild the tree.
+tests/fixtures/ground-truth/*
+!tests/fixtures/ground-truth/README.md

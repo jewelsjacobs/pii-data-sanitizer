@@ -20,6 +20,10 @@ make lint
 
 `make install` runs `uv sync` and creates the local staging directories. Python 3.11+ and [`uv`](https://docs.astral.sh/uv/) are required.
 
+## A note on test fixtures
+
+Ground-truth fixtures under `tests/fixtures/ground-truth/` are **intentionally local-only** and not version-controlled. Even though the content is hand-written and synthetic, it pattern-matches as credential / address / SSN data and is best kept off any remote host. Only `tests/fixtures/ground-truth/README.md` ships with the repo, describing the fixture shape so the tree can be rebuilt from scratch.
+
 ## Common targets
 
 | Target          | What it does                                                     |
