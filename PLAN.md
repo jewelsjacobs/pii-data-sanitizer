@@ -138,7 +138,15 @@ The filesystem-level gate between raw and clean staging.
 
 ## Where we are
 
-Current milestone: **M0 complete.** Next up: **M1 — Ground-truth test set.**
+Current milestone: **M1 complete.** Next up: **M2 — Sanitizer core.**
+
+M1 notes: 20 ground-truth fixture pairs live under `tests/fixtures/ground-truth/`
+(local-files 5, apple-mail 5, imessage 5, ical 5). The tree is intentionally
+**gitignored** — synthetic PII patterns should not land on any remote host.
+`tests/fixtures/ground-truth/README.md` documents the fixture shape so the
+tree can be rebuilt from scratch. `tests/test_sanitizer.py` parametrizes over
+the tree and currently fails all 20 cases with a "sanitizer not implemented"
+message — this is the intended pre-M2 state.
 
 ## Rules for working the plan
 
