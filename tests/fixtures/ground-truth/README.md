@@ -3,6 +3,20 @@
 Hand-written synthetic snippets that encode the expected behavior of the sanitizer.
 No real PII. Every name, email, phone number, and address here is made up.
 
+## Hard rules for fixture content
+
+- **No real filesystem information.** Any `metadata.path` (or any other
+  filesystem-shaped field) must be a fully-synthetic absolute path under
+  `/synthetic/<source>/<case>.<ext>`. No real home directories, macOS
+  usernames, or real directory structures — even though the tree is
+  gitignored, we keep the habit to avoid leaking via logs, error messages,
+  or accidental sharing.
+- **No real identifiers.** Fictional names, `example.invalid` domains,
+  reserved phone ranges (`555-0100`–`555-0199`), documented test
+  credentials (`AKIAIOSFODNN7EXAMPLE`, `4111 1111 1111 1111`). Anything
+  that could be mistaken for a real account, person, or address is
+  replaced before the fixture lands on disk.
+
 ## Layout
 
 ```
