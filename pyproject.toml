@@ -1,0 +1,37 @@
+[project]
+name = "pii-data-sanitizer"
+version = "0.0.1"
+description = "Local PII sanitizer that cleans personal data exports before Obsidian vault ingest."
+requires-python = ">=3.11"
+dependencies = [
+    "python-docx",
+    "pdfplumber",
+    "pytesseract",
+    "Pillow",
+    "striprtf",
+    "icalendar",
+    "html2text",
+    "presidio-analyzer",
+    "presidio-anonymizer",
+    "spacy",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "sources"]
+pythonpath = ["."]

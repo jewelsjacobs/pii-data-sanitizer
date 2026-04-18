@@ -1,0 +1,32 @@
+# Never commit raw or clean data
+raw-staging/
+clean-staging/
+logs/
+
+# Never commit the mapping file or its review queue
+mapping/mapping.enc
+mapping/mapping.review.jsonl
+mapping/*.key
+
+# Standard Python/Node
+.env
+.venv/
+node_modules/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Claude
+CLAUDE.md
+.claude/settings.local.json
+
+# Project docs — kept local only (contain provider/pet/first-name references)
+files/
+files.zip
+
+# VS Code Local History — stores snapshots of every save, may contain past versions of sensitive files
+.history/
+
+# Tool caches
+.pytest_cache/
+.ruff_cache/
