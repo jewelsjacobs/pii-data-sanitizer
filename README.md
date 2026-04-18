@@ -2,13 +2,15 @@
 
 Local pre-processor that cleans raw personal data exports before a separate Claude Code agent pipeline ingests them into an Obsidian vault.
 
-## Start here
+## Repository contents
 
-- [CLAUDE.md](CLAUDE.md) — working rules for Claude Code sessions in this repo
+This repo is a **public scaffold**. The pipeline architecture, redaction policy, source-adapter specs, working rules, and ground-truth fixtures live outside version control (see `.gitignore`). What ships here:
+
 - [PLAN.md](PLAN.md) — implementation milestones and current position
-- [files/pipeline-architecture.md](files/pipeline-architecture.md) — what the pipeline does
-- [files/redaction-policy.md](files/redaction-policy.md) — what gets redacted, pseudonymized, kept
-- [files/source-adapters.md](files/source-adapters.md) — per-source extraction specs
+- `pyproject.toml` + `uv.lock` — Python dependencies managed by `uv`
+- `Makefile` — common targets (see below)
+- Empty package skeletons under `sources/`, `sanitizer/`, and `tests/`
+- `.env.example` — shape of the IMAP credentials file (the real `.env` stays local)
 
 ## Setup
 

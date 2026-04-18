@@ -15,10 +15,10 @@ tests/fixtures/ground-truth/
 
 ## Fixture shape
 
-`input.json` and `expected.json` both hold a **normalized record** matching the shape
-defined in `files/pipeline-architecture.md` (Stage 1 output). The sanitizer (M2+)
-reads `input.json`, runs its layered redaction, and should produce exactly
-`expected.json`.
+`input.json` and `expected.json` both hold a **normalized record** matching the
+Stage 1 extract contract (the project's pipeline architecture doc, kept local).
+The sanitizer (M2+) reads `input.json`, runs its layered redaction, and should
+produce exactly `expected.json`.
 
 ```json
 {
@@ -40,7 +40,7 @@ Each fixture is evaluated against a **fresh, empty mapping file**. That means:
 - The same underlying entity always resolves to the same pseudonym within a
   fixture (this is the property M2 must verify).
 
-Tokens used (from `files/redaction-policy.md` → First-Run Defaults):
+Tokens used (from the project's redaction policy → First-Run Defaults):
 
 | Kind                | Pseudonym            |
 |---------------------|----------------------|
@@ -63,11 +63,11 @@ Hard-redact tokens (from the entity catalog):
 
 Per policy, these stay untouched in `expected.json`:
 
-- The user's own first name (see the allow-list in `files/redaction-policy.md`)
+- The user's own first name (per the KEEP allow-list in the redaction policy)
 - Mental-health narrative content
 - Public figures / authors / fictional characters
 - City-level geography (e.g. `Seattle`, `Portland`)
-- Named pets (see the allow-list in `files/redaction-policy.md`)
+- Named pets (per the KEEP allow-list in the redaction policy)
 
 ## Tricky cases to keep covered
 
