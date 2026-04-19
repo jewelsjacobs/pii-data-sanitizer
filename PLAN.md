@@ -138,19 +138,18 @@ The filesystem-level gate between raw and clean staging.
 
 ## Where we are
 
-Current milestone: **M2 complete.** Next up: **M3 — First adapter (ical).**
+Current milestone: **M3 complete.** Next up: **M4a — local-files adapter.**
 
-M2 notes: `sanitizer/{rules,ner,mapping,first_run_defaults,pipeline}.py`
-are all live. `sanitize(record, *, mapping, self_identity, keep)` runs
-rules (credentials / financial / IPs / conference URLs / home-address /
-ZIP) → email pseudonymization → phone pseudonymization → street-address
-pseudonymization → NER (spaCy `en_core_web_lg`) for PERSON / ORG / GPE.
-Simple first-token coreference handles `Linda` ↔ `Linda Hartwell` within
-a run. All 20 ground-truth fixtures pass; unit tests cover rules,
-mapping, first-run defaults, and pipeline consistency (52 tests total).
-Known NER gaps (common-word names, fictional venues, pronominal coref)
-are documented in `tests/fixtures/ground-truth/README.md` and tracked
-against the redaction policy's "Known Gaps" section.
+M3 notes: `sources/ical/adapter.py` extracts events from .ics files into
+normalized records; halts on missing UID, floating datetimes, or unknown
+inputs. `sanitizer/manifest.py` writes `/clean-staging/<source>/manifest.json`
+per the shape in the pipeline architecture doc. `scripts/extract_ical.py`
+and `scripts/sanitize_source.py` drive the end-to-end flow, reading
+self-identity / keep-list / mapping path from `config/local.json`
+(gitignored; `config/local.example.json` documents the shape).
+Makefile targets: `make extract-ical`, `make sanitize`. 67 tests total
+(ical adapter, manifest, end-to-end smoke, plus everything from M0–M2).
+The user runs the real pipeline; CC never does.
 
 ## Rules for working the plan
 

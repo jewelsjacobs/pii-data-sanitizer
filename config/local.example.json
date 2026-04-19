@@ -1,0 +1,32 @@
+{
+  "_comment": "Copy this file to config/local.json and fill in real values. config/local.json is gitignored — the real identifiers never ship.",
+
+  "ical_source_dirs": [
+    "/Users/REPLACEME/Library/Calendars"
+  ],
+
+  "self_emails": [
+    "you@icloud.com",
+    "you@example.com"
+  ],
+
+  "self_phones": [
+    "+15551234567",
+    "5551234567"
+  ],
+
+  "keep_names": [
+    "ReplaceFirstName",
+    "ReplacePetName1",
+    "ReplacePetName2"
+  ],
+
+  "keep_gpes": [
+    "Seattle"
+  ],
+
+  "mapping_path": "mapping/mapping.json",
+
+  "raw_staging_dir": "/Users/REPLACEME/projects/pii-data-sanitizer/raw-staging",
+  "clean_staging_dir": "/Users/REPLACEME/projects/pii-data-sanitizer/clean-staging"
+}

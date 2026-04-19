@@ -36,3 +36,6 @@ files.zip
 # The README is kept as a generic scaffold so future-you can rebuild the tree.
 tests/fixtures/ground-truth/*
 !tests/fixtures/ground-truth/README.md
+
+# Local pipeline config — real paths, self-identity, keep-list.
+config/local.json

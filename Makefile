@@ -16,13 +16,13 @@ format:
 	uv run ruff format .
 	uv run ruff check --fix .
 
-extract:
-	@echo "extract: not implemented yet — see PLAN.md (M3/M4)"
-	@exit 1
+extract: extract-ical
+
+extract-ical:
+	uv run python scripts/extract_ical.py
 
 sanitize:
-	@echo "sanitize: not implemented yet — see PLAN.md (M2)"
-	@exit 1
+	uv run python scripts/sanitize_source.py --source ical
 
 audit:
 	@echo "audit: not implemented yet — see PLAN.md (M5)"
