@@ -113,17 +113,25 @@ def _event_to_record(vevent: Any, calendar_name: str) -> dict[str, Any]:
 def _to_iso(value: Any, *, context: str) -> str:
     """Normalize a DTSTART/DTEND to ISO 8601.
 
-    - Floating-time ``datetime`` (no tzinfo) → halt per the policy.
+    - Floating-time ``datetime`` (no tzinfo) → interpret as the user's local
+      timezone (matches Apple Calendar semantics for TZ-less events) and
+      convert to UTC. Calendar.app exports produce these routinely; halting
+      would make the adapter unusable against real exports.
     - ``datetime`` with tzinfo → convert to UTC.
     - ``date`` (all-day) → return the date as ISO (no time component).
     """
     if isinstance(value, datetime):
         if value.tzinfo is None:
-            raise AdapterError(f"{context}: floating datetime (no tzinfo) not supported")
+            value = value.replace(tzinfo=_local_tzinfo())
         return value.astimezone(UTC).isoformat()
     if isinstance(value, date):
         return value.isoformat()
     raise AdapterError(f"{context}: unexpected type {type(value).__name__}")
+
+
+def _local_tzinfo() -> Any:
+    """Best-effort local tzinfo for the current machine."""
+    return datetime.now().astimezone().tzinfo
 
 
 def _contact_to_str(prop: Any) -> str:

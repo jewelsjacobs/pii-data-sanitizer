@@ -188,10 +188,19 @@ def test_missing_uid_halts(tmp_path: Path) -> None:
         list(extract_events([ics]))
 
 
-def test_floating_datetime_halts(tmp_path: Path) -> None:
+def test_floating_datetime_interpreted_as_local(tmp_path: Path) -> None:
+    """Apple Calendar exports often have floating times (events created
+    without a specific TZ). The adapter interprets them as the machine's
+    local tz and converts to UTC rather than halting.
+    """
     ics = _write(tmp_path, "floating.ics", FLOATING_DTSTART_ICS)
-    with pytest.raises(AdapterError, match="floating datetime"):
-        list(extract_events([ics]))
+    records = list(extract_events([ics]))
+    assert len(records) == 1
+    ts = records[0]["timestamp"]
+    # Whatever local tz the test runner is in, the result must be a
+    # tz-aware ISO string ending in a UTC offset.
+    assert ts.endswith("+00:00") or ts.endswith("Z")
+    assert "T" in ts  # not a date-only string
 
 
 def test_unknown_path_halts(tmp_path: Path) -> None:
