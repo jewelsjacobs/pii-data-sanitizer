@@ -1,0 +1,239 @@
+"""Local-files source adapter — Stage 1 extract for document files.
+
+Reads ``.txt``, ``.md``, ``.rtf``, ``.docx``, and ``.pdf`` (text-layer or
+OCR'd) from configured source directories and emits normalized records
+matching files/pipeline-architecture.md → Stage 1. Never redacts, never
+writes outside ``/raw-staging/local-files/``. Halts loudly on decode
+errors, encrypted files, password-protected PDFs, corrupted inputs, or
+unsupported formats.
+
+Legacy ``.doc`` (Word 97-2003) is intentionally **not** supported right
+now — it's rare in practice and the existing Python tooling (textract,
+antiword) has heavy or fragile install requirements. Convert to
+``.docx`` or ``.pdf`` and re-run.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from datetime import UTC, datetime
+from hashlib import sha256
+from pathlib import Path
+from typing import Any
+
+SUPPORTED_EXTENSIONS = frozenset({".txt", ".md", ".rtf", ".docx", ".pdf"})
+UNSUPPORTED_EXTENSIONS = frozenset({".doc"})
+
+# OCR fallback thresholds per files/source-adapters.md → PDF OCR Policy.
+OCR_RESOLUTION = 300
+OCR_CONFIDENCE_THRESHOLD = 60.0
+
+
+class AdapterError(RuntimeError):
+    """Raised when the adapter encounters input it refuses to pass through."""
+
+
+def extract_files(paths: list[Path]) -> Iterator[dict[str, Any]]:
+    """Yield normalized records from every supported file under ``paths``.
+
+    Each entry is either a single file or a directory walked recursively.
+    Unknown / unsupported extensions inside a walk are skipped silently
+    (most directories have junk) — but a file explicitly named on the
+    command line with an unsupported extension raises.
+    """
+    for entry in paths:
+        entry = Path(entry)
+        if entry.is_dir():
+            for file in sorted(entry.rglob("*")):
+                if not file.is_file():
+                    continue
+                ext = file.suffix.lower()
+                if ext in UNSUPPORTED_EXTENSIONS:
+                    raise AdapterError(
+                        f"{file}: legacy .doc is not supported. "
+                        f"Convert to .docx or .pdf and re-run."
+                    )
+                if ext in SUPPORTED_EXTENSIONS:
+                    yield _file_to_record(file)
+        elif entry.is_file():
+            ext = entry.suffix.lower()
+            if ext in UNSUPPORTED_EXTENSIONS:
+                raise AdapterError(
+                    f"{entry}: legacy .doc is not supported. Convert to .docx or .pdf and re-run."
+                )
+            if ext not in SUPPORTED_EXTENSIONS:
+                raise AdapterError(f"{entry}: unsupported extension {ext!r}")
+            yield _file_to_record(entry)
+        else:
+            raise AdapterError(f"Not a file or directory: {entry}")
+
+
+def _file_to_record(path: Path) -> dict[str, Any]:
+    data = path.read_bytes()
+    source_id = "sha256:" + sha256(data).hexdigest()
+    mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC).isoformat()
+    size_bytes = len(data)
+    ext = path.suffix.lower()
+
+    content, extraction_method, page_count, ocr_low_confidence = _extract(path, data, ext)
+
+    return {
+        "source": "local-files",
+        "source_id": source_id,
+        "timestamp": mtime,
+        "content": content,
+        "metadata": {
+            "path": str(path.resolve()),
+            "format": ext.lstrip("."),
+            "extraction_method": extraction_method,
+            "ocr_low_confidence": ocr_low_confidence,
+            "page_count": page_count,
+            "size_bytes": size_bytes,
+        },
+    }
+
+
+def _extract(path: Path, data: bytes, ext: str) -> tuple[str, str, int, bool]:
+    """Dispatch to the per-format extractor.
+
+    Returns ``(content, extraction_method, page_count, ocr_low_confidence)``.
+    ``extraction_method`` is one of ``"native"``, ``"text_layer"``, ``"ocr"``.
+    """
+    if ext in {".txt", ".md"}:
+        return _extract_text(path, data), "native", 1, False
+    if ext == ".rtf":
+        return _extract_rtf(path, data), "native", 1, False
+    if ext == ".docx":
+        content, pages = _extract_docx(path)
+        return content, "native", pages, False
+    if ext == ".pdf":
+        return _extract_pdf(path)
+    raise AdapterError(f"{path}: no extractor for extension {ext!r}")
+
+
+def _extract_text(path: Path, data: bytes) -> str:
+    """UTF-8 only. Halt on decode errors rather than silently swap encodings."""
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise AdapterError(f"{path}: UTF-8 decode error: {exc}") from exc
+
+
+def _extract_rtf(path: Path, data: bytes) -> str:
+    from striprtf.striprtf import rtf_to_text
+
+    try:
+        text = data.decode("utf-8", errors="replace")
+    except Exception as exc:  # unreachable with errors=replace but keeps symmetry
+        raise AdapterError(f"{path}: rtf decode error: {exc}") from exc
+    try:
+        return rtf_to_text(text)
+    except Exception as exc:
+        raise AdapterError(f"{path}: rtf parse error: {exc}") from exc
+
+
+def _extract_docx(path: Path) -> tuple[str, int]:
+    """Paragraphs + table cell text. Headers/footers included. Comments
+    skipped. Halt on encrypted / password-protected / corrupted documents.
+    """
+    try:
+        import docx
+        from docx.opc.exceptions import PackageNotFoundError
+    except ImportError as exc:  # pragma: no cover — declared in pyproject
+        raise AdapterError(f"{path}: python-docx not installed: {exc}") from exc
+
+    try:
+        document = docx.Document(str(path))
+    except PackageNotFoundError as exc:
+        raise AdapterError(f"{path}: not a valid .docx (corrupted or encrypted): {exc}") from exc
+    except Exception as exc:
+        raise AdapterError(f"{path}: docx parse error: {exc}") from exc
+
+    parts: list[str] = []
+    for para in document.paragraphs:
+        if para.text:
+            parts.append(para.text)
+    for table in document.tables:
+        for row in table.rows:
+            for cell in row.cells:
+                if cell.text:
+                    parts.append(cell.text)
+    # Headers / footers, if present.
+    for section in document.sections:
+        for container in (section.header, section.footer):
+            for para in container.paragraphs:
+                if para.text:
+                    parts.append(para.text)
+
+    # Rough "page" count: docx doesn't carry hard page boundaries without
+    # rendering; report 1 as a conservative placeholder.
+    return "\n\n".join(parts), 1
+
+
+def _extract_pdf(path: Path) -> tuple[str, str, int, bool]:
+    """Prefer the text layer; fall back to Tesseract OCR when it's missing
+    or empty. Halt on encrypted PDFs (no bypass attempt).
+    """
+    try:
+        import pdfplumber
+    except ImportError as exc:  # pragma: no cover
+        raise AdapterError(f"{path}: pdfplumber not installed: {exc}") from exc
+
+    try:
+        pdf = pdfplumber.open(str(path))
+    except Exception as exc:
+        raise AdapterError(f"{path}: pdf open error: {exc}") from exc
+
+    with pdf:
+        if getattr(pdf, "is_encrypted", False):
+            raise AdapterError(f"{path}: password-protected PDF; refusing to bypass.")
+
+        page_count = len(pdf.pages)
+
+        # Try text layer first.
+        text_pages = [page.extract_text() or "" for page in pdf.pages]
+        joined = "\n\n".join(p for p in text_pages if p.strip())
+        if joined.strip():
+            return joined, "text_layer", page_count, False
+
+        # Fall back to OCR per files/source-adapters.md → PDF OCR Policy.
+        return _ocr_pdf(path, pdf, page_count)
+
+
+def _ocr_pdf(path: Path, pdf: Any, page_count: int) -> tuple[str, str, int, bool]:
+    try:
+        import pytesseract
+    except ImportError as exc:  # pragma: no cover
+        raise AdapterError(f"{path}: pytesseract not installed: {exc}") from exc
+
+    ocr_parts: list[str] = []
+    low_confidence_any = False
+    for page in pdf.pages:
+        image = page.to_image(resolution=OCR_RESOLUTION).original
+        try:
+            data = pytesseract.image_to_data(
+                image,
+                lang="eng",
+                output_type=pytesseract.Output.DICT,
+            )
+        except pytesseract.TesseractNotFoundError as exc:
+            raise AdapterError(
+                f"{path}: tesseract binary not found. Install via `brew install tesseract` "
+                f"or see files/source-adapters.md → PDF OCR Policy."
+            ) from exc
+        except Exception as exc:
+            raise AdapterError(f"{path}: OCR failed: {exc}") from exc
+
+        confidences = [
+            float(c)
+            for c in data.get("conf", [])
+            if c not in ("-1", "", None) and str(c).strip() != "-1"
+        ]
+        avg = sum(confidences) / len(confidences) if confidences else 0.0
+        if avg < OCR_CONFIDENCE_THRESHOLD:
+            low_confidence_any = True
+
+        words = [w for w in data.get("text", []) if w and w.strip()]
+        ocr_parts.append(" ".join(words))
+
+    return "\n\n".join(p for p in ocr_parts if p), "ocr", page_count, low_confidence_any

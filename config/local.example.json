@@ -6,9 +6,13 @@
     "/Users/REPLACEME/calendar-exports"
   ],
 
+  "_comment_local_files": "Directories that hold .txt, .md, .rtf, .docx, or .pdf documents you want sanitized. The adapter walks these recursively and dispatches per extension. Legacy .doc halts — convert to .docx or .pdf first.",
+  "local_files_source_dirs": [
+    "/Users/REPLACEME/Documents/to-sanitize"
+  ],
+
   "self_emails": [
-    "you@icloud.com",
-    "you@example.com"
+    "you@example.invalid"
   ],
 
   "self_phones": [

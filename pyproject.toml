@@ -14,12 +14,19 @@ dependencies = [
     "presidio-analyzer",
     "presidio-anonymizer",
     "spacy",
+    # Pinned so `uv sync` keeps the NER model in the venv. Without this,
+    # uv treats manually-installed spaCy models as stray packages and
+    # removes them on the next sync.
+    "en-core-web-lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl",
 ]
 
 [dependency-groups]
 dev = [
     "pytest",
     "ruff",
+    # Used only in tests/ to generate synthetic text-layer PDFs on the fly;
+    # avoids committing binary fixture files.
+    "reportlab",
 ]
 
 [tool.uv]

@@ -20,6 +20,7 @@ EXAMPLE_CONFIG_PATH = Path("config/local.example.json")
 @dataclass(frozen=True)
 class LocalConfig:
     ical_source_dirs: list[Path] = field(default_factory=list)
+    local_files_source_dirs: list[Path] = field(default_factory=list)
     self_emails: frozenset[str] = field(default_factory=frozenset)
     self_phones: frozenset[str] = field(default_factory=frozenset)
     keep_names: frozenset[str] = field(default_factory=frozenset)
@@ -40,6 +41,7 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> LocalConfig:
     data = json.loads(path.read_text())
     return LocalConfig(
         ical_source_dirs=[Path(p) for p in data.get("ical_source_dirs", [])],
+        local_files_source_dirs=[Path(p) for p in data.get("local_files_source_dirs", [])],
         self_emails=frozenset(e.strip().lower() for e in data.get("self_emails", [])),
         self_phones=frozenset(_normalize_phone(p) for p in data.get("self_phones", [])),
         keep_names=frozenset(data.get("keep_names", [])),

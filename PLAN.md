@@ -138,27 +138,31 @@ The filesystem-level gate between raw and clean staging.
 
 ## Where we are
 
-Current milestone: **M3 complete.** Next up: **M4a — local-files adapter.**
+Current milestone: **M4a complete.** Next up: **M4b — imessage adapter.**
 
-M3 notes: `sources/ical/adapter.py` extracts events from .ics files into
-normalized records; halts on missing UID, floating datetimes, or unknown
-inputs. `sanitizer/manifest.py` writes `/clean-staging/<source>/manifest.json`
-per the shape in the pipeline architecture doc. `scripts/extract_ical.py`
-and `scripts/sanitize_source.py` drive the end-to-end flow, reading
-self-identity / keep-list / mapping path from `config/local.json`
-(gitignored; `config/local.example.json` documents the shape).
-Makefile targets: `make extract-ical`, `make sanitize`. 67 tests total
-(ical adapter, manifest, end-to-end smoke, plus everything from M0–M2).
-The user runs the real pipeline; CC never does.
+M3 notes: `sources/ical/adapter.py`, `sanitizer/manifest.py`,
+`scripts/extract_ical.py`, `scripts/sanitize_source.py`. Ical run
+against real exports: 601 events extracted + sanitized, spot-check
+clean. Real-run workflow for ical: export each calendar from
+Calendar.app (File → Export → Export…) into a dedicated directory
+and point `ical_source_dirs` at it — `~/Library/Calendars` on current
+macOS is empty, events live in iCloud CalDAV + a SQLite cache this
+project refuses to read. Floating-time datetimes are interpreted as
+local-timezone (Apple Calendar convention) rather than halted.
 
-M3 empirical finding (2026-04-19): `~/Library/Calendars/` on current
-macOS no longer holds readable `.ics` files — Calendar.app syncs via
-iCloud CalDAV and a local SQLite cache this project refuses to read.
-**Real-run workflow for ical:** export each calendar from Calendar.app
-(File → Export → Export…) into a dedicated directory, point
-`ical_source_dirs` at it, then run the Makefile targets. See the note
-in `files/source-adapters.md` → ical. CalDAV-over-network support is
-deferred until the export workflow proves insufficient.
+M4a notes: `sources/local_files/adapter.py` handles `.txt`, `.md`,
+`.rtf`, `.docx`, and `.pdf` (text-layer → Tesseract OCR fallback at
+300 DPI with confidence threshold 60). Halts on UTF-8 decode errors,
+corrupted / encrypted docx, corrupted / password-protected PDFs.
+Legacy `.doc` halts with a "convert to .docx or .pdf" message
+(textract/antiword tooling is too fragile to depend on).
+`scripts/extract_local_files.py` drives it from
+`local_files_source_dirs` in `config/local.json`. Makefile targets:
+`make extract-local-files`, `make sanitize-local-files`, plus the
+aggregates `make extract` / `make sanitize` that run every source.
+`en-core-web-lg` is now a pinned pyproject dependency so
+`uv sync` doesn't drop the NER model. Test suite: 82 passing
+(15 new local-files cases).
 
 ## Rules for working the plan
 

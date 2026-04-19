@@ -1,8 +1,7 @@
-.PHONY: install test lint format extract sanitize audit
+.PHONY: install test lint format extract extract-ical extract-local-files sanitize sanitize-ical sanitize-local-files audit
 
 install:
 	uv sync
-	uv run python -m spacy download en_core_web_lg
 	mkdir -p logs raw-staging clean-staging
 
 test:
@@ -16,13 +15,21 @@ format:
 	uv run ruff format .
 	uv run ruff check --fix .
 
-extract: extract-ical
+extract: extract-ical extract-local-files
 
 extract-ical:
 	uv run python -m scripts.extract_ical
 
-sanitize:
+extract-local-files:
+	uv run python -m scripts.extract_local_files
+
+sanitize: sanitize-ical sanitize-local-files
+
+sanitize-ical:
 	uv run python -m scripts.sanitize_source --source ical
+
+sanitize-local-files:
+	uv run python -m scripts.sanitize_source --source local-files
 
 audit:
 	@echo "audit: not implemented yet — see PLAN.md (M5)"
