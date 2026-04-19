@@ -140,27 +140,47 @@ def test_missing_message_id_falls_back_to_sha256() -> None:
     assert record["source_id"].startswith("sha256:")
 
 
-def test_unparseable_date_halts() -> None:
-    # EmailMessage's default policy strips malformed Date values, so build
-    # the raw bytes directly to ensure the header reaches _parse_message.
+def test_unparseable_date_falls_back_to_received() -> None:
+    """Unparseable Date headers used to halt; now they fall back to the
+    last Received-header timestamp and flag ``date_synthesized``."""
     raw = (
         b"From: Alex <alex@example.invalid>\r\n"
         b"To: Lea <testuser@example.invalid>\r\n"
         b"Subject: Malformed date\r\n"
         b"Date: not a real date\r\n"
+        b"Received: from smtp.example.invalid by x.invalid;\r\n"
+        b"          Mon, 01 Feb 2026 10:00:00 +0000\r\n"
         b"Message-ID: <bad-date-001@example.invalid>\r\n"
         b"Content-Type: text/plain; charset=utf-8\r\n"
         b"\r\n"
         b"body\r\n"
     )
-    with pytest.raises(AdapterError, match="Unparseable Date header"):
-        _parse_message(raw, folder_name="INBOX")
+    record = _parse_message(raw, folder_name="INBOX")
+    assert record["timestamp"] == "2026-02-01T10:00:00+00:00"
+    assert record["metadata"]["date_synthesized"] is True
 
 
-def test_missing_date_halts() -> None:
-    raw = _build(date="")
-    with pytest.raises(AdapterError, match="Missing Date header"):
-        _parse_message(raw, folder_name="INBOX")
+def test_missing_date_synthesizes_when_no_received() -> None:
+    """No Date, no usable Received → synthesize 'now' and flag it."""
+    raw = (
+        b"From: Alex <alex@example.invalid>\r\n"
+        b"To: Lea <testuser@example.invalid>\r\n"
+        b"Subject: No date\r\n"
+        b"Message-ID: <synth-001@example.invalid>\r\n"
+        b"Content-Type: text/plain; charset=utf-8\r\n"
+        b"\r\n"
+        b"body\r\n"
+    )
+    record = _parse_message(raw, folder_name="INBOX")
+    assert record["metadata"]["date_synthesized"] is True
+    # Synthesized "now" timestamp — just verify it's a valid tz-aware ISO.
+    assert record["timestamp"].endswith("+00:00")
+
+
+def test_valid_date_is_not_marked_synthesized() -> None:
+    raw = _build()
+    record = _parse_message(raw, folder_name="INBOX")
+    assert record["metadata"]["date_synthesized"] is False
 
 
 # ---------------------------------------------------------------------------

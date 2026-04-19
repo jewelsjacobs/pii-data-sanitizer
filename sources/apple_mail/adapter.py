@@ -29,7 +29,7 @@ import re
 import ssl
 import sys
 from collections.abc import Iterator
-from datetime import UTC
+from datetime import UTC, datetime
 from email.message import Message
 from hashlib import sha256
 from typing import Any
@@ -223,7 +223,7 @@ def _parse_message(raw: bytes, *, folder_name: str) -> dict[str, Any]:
     message_id = (msg.get("Message-ID") or "").strip()
     source_id = message_id or "sha256:" + sha256(raw).hexdigest()
 
-    timestamp = _parse_date_header(msg.get("Date", ""))
+    timestamp, date_synthesized = _resolve_timestamp(msg)
     content = _extract_body(msg)
     has_attachments, attachment_count = _count_attachments(msg)
 
@@ -243,27 +243,67 @@ def _parse_message(raw: bytes, *, folder_name: str) -> dict[str, Any]:
             "references": _split_references(msg.get("References", "")),
             "has_attachments": has_attachments,
             "attachment_count": attachment_count,
+            "date_synthesized": date_synthesized,
         },
     }
 
 
-def _parse_date_header(raw: str) -> str:
-    """``email.utils.parsedate_to_datetime`` handles the usual RFC 2822
-    shapes. Halt on failure rather than guess; malformed timestamps are
-    a sign of something weirder happening."""
+def _resolve_timestamp(msg: Message) -> tuple[str, bool]:
+    """Return ``(iso_utc_string, synthesized)``.
+
+    Empirically, iCloud mailboxes contain messages with missing or
+    malformed ``Date:`` headers (migrated accounts, auto-generated
+    messages, system notifications). The original policy of halting on
+    any such message costs hours of progress on real mailboxes, so we
+    fall back instead:
+
+    1. Primary ``Date:`` header (RFC 2822 parse).
+    2. Last ``Received:`` header's trailing timestamp.
+    3. Current UTC as a last resort.
+
+    ``synthesized=True`` flags any record whose timestamp didn't come
+    from a trustworthy ``Date:`` — downstream agents can weight these
+    lower in chronological ordering or flag them for review.
+    """
+    primary = _try_parse_date(msg.get("Date", ""))
+    if primary is not None:
+        return primary, False
+    fallback = _try_parse_received(msg)
+    if fallback is not None:
+        return fallback, True
+    return datetime.now(UTC).isoformat(), True
+
+
+def _try_parse_date(raw: str) -> str | None:
+    """Try to parse a Date header. Return ISO UTC string or None."""
     if not raw:
-        raise AdapterError("Missing Date header")
+        return None
     try:
         dt = email.utils.parsedate_to_datetime(raw)
-    except (TypeError, ValueError) as exc:
-        raise AdapterError(f"Unparseable Date header {raw!r}: {exc}") from exc
+    except (TypeError, ValueError):
+        return None
     if dt is None:
-        raise AdapterError(f"Unparseable Date header {raw!r}")
+        return None
     if dt.tzinfo is None:
-        # Rare but valid — per-RFC 2822 a missing zone means "local".
-        # Treat as UTC to produce a canonical form rather than a floating time.
         dt = dt.replace(tzinfo=UTC)
     return dt.astimezone(UTC).isoformat()
+
+
+def _try_parse_received(msg: Message) -> str | None:
+    """Pull a timestamp from the first ``Received:`` header with one.
+
+    Received lines are structured as:
+        Received: from <host> by <host> with <proto>; <date>
+    The date always follows the last ``;``.
+    """
+    for received in msg.get_all("Received") or []:
+        if ";" not in received:
+            continue
+        candidate = received.rsplit(";", 1)[-1].strip()
+        parsed = _try_parse_date(candidate)
+        if parsed is not None:
+            return parsed
+    return None
 
 
 def _extract_body(msg: Message) -> str:
