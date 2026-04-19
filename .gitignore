@@ -3,9 +3,12 @@ raw-staging/
 clean-staging/
 logs/
 
-# Never commit the mapping file or its review queue
+# Never commit the mapping file or its review queue.
+# mapping/*.json covers the current M2/M3 unencrypted format; mapping.enc
+# is the future encrypted-at-rest format per the pipeline architecture.
 mapping/mapping.enc
 mapping/mapping.review.jsonl
+mapping/*.json
 mapping/*.key
 
 # Standard Python/Node

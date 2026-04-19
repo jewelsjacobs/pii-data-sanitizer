@@ -1,8 +1,9 @@
 {
   "_comment": "Copy this file to config/local.json and fill in real values. config/local.json is gitignored — the real identifiers never ship.",
 
+  "_comment_ical": "On modern macOS, Calendar.app no longer keeps readable .ics files under ~/Library/Calendars. Export each calendar from Calendar.app (File > Export > Export...) into a dedicated directory and point at that directory here. Re-export when you want a fresh snapshot.",
   "ical_source_dirs": [
-    "/Users/REPLACEME/Library/Calendars"
+    "/Users/REPLACEME/calendar-exports"
   ],
 
   "self_emails": [

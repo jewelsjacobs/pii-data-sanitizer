@@ -151,6 +151,15 @@ Makefile targets: `make extract-ical`, `make sanitize`. 67 tests total
 (ical adapter, manifest, end-to-end smoke, plus everything from M0–M2).
 The user runs the real pipeline; CC never does.
 
+M3 empirical finding (2026-04-19): `~/Library/Calendars/` on current
+macOS no longer holds readable `.ics` files — Calendar.app syncs via
+iCloud CalDAV and a local SQLite cache this project refuses to read.
+**Real-run workflow for ical:** export each calendar from Calendar.app
+(File → Export → Export…) into a dedicated directory, point
+`ical_source_dirs` at it, then run the Makefile targets. See the note
+in `files/source-adapters.md` → ical. CalDAV-over-network support is
+deferred until the export workflow proves insufficient.
+
 ## Rules for working the plan
 
 - Do not skip milestones.
