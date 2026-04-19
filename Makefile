@@ -19,10 +19,10 @@ format:
 extract: extract-ical
 
 extract-ical:
-	uv run python scripts/extract_ical.py
+	uv run python -m scripts.extract_ical
 
 sanitize:
-	uv run python scripts/sanitize_source.py --source ical
+	uv run python -m scripts.sanitize_source --source ical
 
 audit:
 	@echo "audit: not implemented yet — see PLAN.md (M5)"
