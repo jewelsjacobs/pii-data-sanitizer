@@ -160,12 +160,41 @@ def _fetch_folder(
         flush=True,
     )
 
+    # Diagnostic: log the first few UIDs per folder so we can see response
+    # shape mismatches (e.g. iCloud returning an unexpected FETCH layout).
+    diag_budget = 3
     for i, uid in enumerate(uids, start=1):
         status, fetch_data = client.uid("FETCH", uid, "(RFC822)")
-        if status != "OK" or not fetch_data:
+        if status != "OK":
+            if diag_budget > 0:
+                print(
+                    f"    [{folder_name}] uid={uid!r} FETCH status={status}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                diag_budget -= 1
+            continue
+        if not fetch_data:
+            if diag_budget > 0:
+                print(
+                    f"    [{folder_name}] uid={uid!r} empty fetch_data",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                diag_budget -= 1
             continue
         body = _extract_rfc822_bytes(fetch_data)
         if body is None:
+            if diag_budget > 0:
+                shape = [type(x).__name__ for x in fetch_data]
+                preview = repr(fetch_data)[:400]
+                print(
+                    f"    [{folder_name}] uid={uid!r} no body extracted; "
+                    f"shape={shape}; preview={preview}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                diag_budget -= 1
             continue
         yield _parse_message(body, folder_name=folder_name)
         if i % 100 == 0:
