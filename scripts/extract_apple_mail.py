@@ -90,7 +90,10 @@ def main(argv: list[str] | None = None) -> int:
     with out_file.open("w") as fout:
         for record in extract_mail(email_address, password, since_uid=since_uid):
             fout.write(json.dumps(record) + "\n")
+            fout.flush()  # show progress in real time; wc -l on the output file is accurate
             count += 1
+            if count % 50 == 0:
+                print(f"  ...{count} records", file=sys.stderr, flush=True)
             # Opportunistic resume-marker update. source_id is the
             # Message-ID, not the UID, so we derive the UID from the
             # mail record indirectly: left as a TODO if incremental

@@ -27,6 +27,7 @@ import email.utils
 import imaplib
 import re
 import ssl
+import sys
 from collections.abc import Iterator
 from datetime import UTC
 from email.message import Message
@@ -128,16 +129,38 @@ def _fetch_folder(
     """Select ``folder_name`` read-only and yield every message matched
     by the UID-search criterion."""
     quoted = f'"{folder_name}"'
-    status, _ = client.select(quoted, readonly=True)
+    status, select_data = client.select(quoted, readonly=True)
     if status != "OK":
-        return  # unreadable folder — skip silently (common for server-side noise)
+        print(f"  [{folder_name}] unreadable, skipping", file=sys.stderr, flush=True)
+        return
+
+    # EXISTS count from SELECT — just for progress visibility.
+    total: int | None = None
+    try:
+        if select_data and isinstance(select_data[0], bytes | bytearray):
+            total = int(select_data[0].decode())
+    except (ValueError, AttributeError):
+        total = None
 
     criterion = f"UID {since_uid + 1}:*" if since_uid else "ALL"
     status, search_data = client.uid("SEARCH", None, criterion)
     if status != "OK" or not search_data or not search_data[0]:
+        print(
+            f"  [{folder_name}] 0 messages matched (total={total if total is not None else '?'})",
+            file=sys.stderr,
+            flush=True,
+        )
         return
 
-    for uid in search_data[0].split():
+    uids = search_data[0].split()
+    print(
+        f"  [{folder_name}] fetching {len(uids)} message(s) "
+        f"(total={total if total is not None else '?'})",
+        file=sys.stderr,
+        flush=True,
+    )
+
+    for i, uid in enumerate(uids, start=1):
         status, fetch_data = client.uid("FETCH", uid, "(RFC822)")
         if status != "OK" or not fetch_data:
             continue
@@ -145,6 +168,8 @@ def _fetch_folder(
         if body is None:
             continue
         yield _parse_message(body, folder_name=folder_name)
+        if i % 100 == 0:
+            print(f"    [{folder_name}] {i}/{len(uids)}", file=sys.stderr, flush=True)
 
 
 def _extract_rfc822_bytes(fetch_data: list[Any]) -> bytes | None:
