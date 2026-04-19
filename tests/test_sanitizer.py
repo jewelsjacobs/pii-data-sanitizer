@@ -45,6 +45,19 @@ def _discover_fixtures() -> list[tuple[str, Path]]:
 _FIXTURES = _discover_fixtures()
 
 
+# Synthetic "self" identifiers used by the ground-truth fixtures.
+# These are test-only stand-ins for the real user; fixtures encode them
+# as `[MY_EMAIL]` / `[MY_PHONE]` in expected.json.
+_TEST_SELF_EMAILS = frozenset({"testuser@example.invalid"})
+_TEST_SELF_PHONES = frozenset({"5035550142", "15035550142"})
+
+# Keep-list for NER bypass: a synthetic first name and two synthetic pet
+# names (stand-ins for the real user's KEEP allow-list), plus city-level
+# geography that should pass through instead of being pseudonymized.
+_TEST_KEEP_NAMES = frozenset({"Lea", "Mochi", "Kip"})
+_TEST_KEEP_GPES = frozenset({"Seattle", "Portland"})
+
+
 @pytest.mark.parametrize(
     "case_dir",
     [pytest.param(path, id=case_id) for case_id, path in _FIXTURES],
@@ -52,7 +65,7 @@ _FIXTURES = _discover_fixtures()
 def test_sanitizer_matches_ground_truth(case_dir: Path) -> None:
     """Feed input.json through the sanitizer; diff against expected.json."""
     try:
-        from sanitizer.pipeline import sanitize
+        from sanitizer.pipeline import KeepList, SelfIdentity, sanitize
     except ImportError as exc:
         pytest.fail(
             f"sanitizer.pipeline.sanitize is not implemented yet "
@@ -62,7 +75,12 @@ def test_sanitizer_matches_ground_truth(case_dir: Path) -> None:
     input_record = json.loads((case_dir / "input.json").read_text())
     expected_record = json.loads((case_dir / "expected.json").read_text())
 
-    actual_record = sanitize(input_record)
+    self_identity = SelfIdentity(
+        emails=_TEST_SELF_EMAILS,
+        phones=_TEST_SELF_PHONES,
+    )
+    keep = KeepList(names=_TEST_KEEP_NAMES, gpes=_TEST_KEEP_GPES)
+    actual_record = sanitize(input_record, self_identity=self_identity, keep=keep)
 
     assert actual_record == expected_record, (
         f"Sanitizer output diverged from {case_dir.name}/expected.json"

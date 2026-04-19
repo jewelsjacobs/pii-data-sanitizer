@@ -138,15 +138,19 @@ The filesystem-level gate between raw and clean staging.
 
 ## Where we are
 
-Current milestone: **M1 complete.** Next up: **M2 — Sanitizer core.**
+Current milestone: **M2 complete.** Next up: **M3 — First adapter (ical).**
 
-M1 notes: 20 ground-truth fixture pairs live under `tests/fixtures/ground-truth/`
-(local-files 5, apple-mail 5, imessage 5, ical 5). The tree is intentionally
-**gitignored** — synthetic PII patterns should not land on any remote host.
-`tests/fixtures/ground-truth/README.md` documents the fixture shape so the
-tree can be rebuilt from scratch. `tests/test_sanitizer.py` parametrizes over
-the tree and currently fails all 20 cases with a "sanitizer not implemented"
-message — this is the intended pre-M2 state.
+M2 notes: `sanitizer/{rules,ner,mapping,first_run_defaults,pipeline}.py`
+are all live. `sanitize(record, *, mapping, self_identity, keep)` runs
+rules (credentials / financial / IPs / conference URLs / home-address /
+ZIP) → email pseudonymization → phone pseudonymization → street-address
+pseudonymization → NER (spaCy `en_core_web_lg`) for PERSON / ORG / GPE.
+Simple first-token coreference handles `Linda` ↔ `Linda Hartwell` within
+a run. All 20 ground-truth fixtures pass; unit tests cover rules,
+mapping, first-run defaults, and pipeline consistency (52 tests total).
+Known NER gaps (common-word names, fictional venues, pronominal coref)
+are documented in `tests/fixtures/ground-truth/README.md` and tracked
+against the redaction policy's "Known Gaps" section.
 
 ## Rules for working the plan
 

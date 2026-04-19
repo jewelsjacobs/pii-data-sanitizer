@@ -91,3 +91,23 @@ If adding or replacing fixtures, make sure these categories remain represented:
 - Common-word names (`April`, `May`, `Frank`).
 - Address inside a signature block.
 - Unformatted phone (`5551234567`, no separators).
+
+## Known NER limitations (accepted in current fixtures)
+
+The M2 sanitizer uses spaCy (`en_core_web_lg`) for PERSON / ORG / GPE
+detection. A few shapes are genuinely hard for NER and the fixtures
+encode the sanitizer's actual behavior rather than an idealized one:
+
+- **Common-word first names in ambiguous context.** `April said ...`
+  stays as `April` because spaCy can't reliably tell the first `April`
+  from the date in `April 15th`. The headers in the same fixture still
+  pseudonymize `April Chen` correctly (the last-name disambiguates).
+- **Fictional / invented org names.** `Cafe Luna` as a one-off venue
+  name is not detected. Real brands (`Netflix`) and names with strong
+  org signals (`Oak & Vine LLC`) are caught.
+- **Coreference across surface forms.** `Linda` ↔ `Linda Hartwell`
+  collapses to the same pseudonym via a first-token heuristic, but
+  pronominal coref (`she` → Linda) is out of scope for M2.
+
+These limitations are tracked in the redaction policy's "Known Gaps"
+section. Future work: add a coreference pass and manual org-name hints.

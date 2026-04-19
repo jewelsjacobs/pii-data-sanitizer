@@ -2,6 +2,7 @@
 
 install:
 	uv sync
+	uv run python -m spacy download en_core_web_lg
 	mkdir -p logs raw-staging clean-staging
 
 test:
