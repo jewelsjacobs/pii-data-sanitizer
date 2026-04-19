@@ -11,6 +11,7 @@ dependencies = [
     "striprtf",
     "icalendar",
     "html2text",
+    "python-dotenv",
     "presidio-analyzer",
     "presidio-anonymizer",
     "spacy",

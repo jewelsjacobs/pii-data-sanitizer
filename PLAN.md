@@ -138,7 +138,9 @@ The filesystem-level gate between raw and clean staging.
 
 ## Where we are
 
-Current milestone: **M4a complete.** Next up: **M4b — imessage adapter.**
+Current milestone: **M4a + M4c complete.** Next up: **M4b — imessage adapter
+(reordered after M4c at user request; original PLAN order was M4a → M4b →
+M4c, but the user wanted email before iMessage).**
 
 M3 notes: `sources/ical/adapter.py`, `sanitizer/manifest.py`,
 `scripts/extract_ical.py`, `scripts/sanitize_source.py`. Ical run
@@ -163,6 +165,22 @@ aggregates `make extract` / `make sanitize` that run every source.
 `en-core-web-lg` is now a pinned pyproject dependency so
 `uv sync` doesn't drop the NER model. Test suite: 82 passing
 (15 new local-files cases).
+
+M4c notes: `sources/apple_mail/adapter.py` uses stdlib `imaplib.IMAP4_SSL`
+against `imap.mail.me.com:993` with mandatory cert verification (no
+STARTTLS fallback). Folder handling is a deny-list with case-insensitive
+short-name matching (Junk/Trash/Drafts/etc.). Messages are fetched via
+UID search; `since_uid={folder: N}` triggers `UID <N+1>:*` for
+incremental runs. MIME parsing prefers `text/plain`, falls back to
+`text/html` via `html2text`, decodes quoted-printable + base64, respects
+`Content-Type` charset, halts on malformed Date headers. Attachments
+are counted but never downloaded. Credentials are passed through the
+adapter's parameters — never logged, never appear in exceptions.
+`scripts/extract_apple_mail.py` loads `.env` via python-dotenv and
+drives the adapter; Makefile target: `make extract-apple-mail`.
+Test suite: 104 passing (22 new apple-mail cases, including
+mocked-IMAP deny-list / UID pagination / credential-leak guards).
+python-dotenv added as a direct dependency.
 
 ## Rules for working the plan
 
