@@ -164,7 +164,13 @@ def _fetch_folder(
     # shape mismatches (e.g. iCloud returning an unexpected FETCH layout).
     diag_budget = 3
     for i, uid in enumerate(uids, start=1):
-        status, fetch_data = client.uid("FETCH", uid, "(RFC822)")
+        # iCloud IMAP ignores the legacy `(RFC822)` fetch item (responds
+        # with just `(UID N)`). Use the modern `BODY.PEEK[]` form instead —
+        # it fetches the entire raw message without marking it \Seen.
+        # Decode UID to str so imaplib doesn't wrap the bytes as a quoted
+        # literal, which would also produce a no-op FETCH.
+        uid_str = uid.decode("ascii") if isinstance(uid, bytes) else str(uid)
+        status, fetch_data = client.uid("FETCH", uid_str, "(BODY.PEEK[])")
         if status != "OK":
             if diag_budget > 0:
                 print(
