@@ -1,16 +1,20 @@
 """CLI: extract iCloud mail to ``/raw-staging/apple-mail/events.jsonl``.
 
-Reads ICLOUD_EMAIL + ICLOUD_APP_PASSWORD from ``.env`` (via python-dotenv),
-connects to iCloud IMAP over implicit TLS, walks every non-denylisted
-folder, and emits normalized records as JSONL.
+Two-phase flow:
 
-Supports incremental runs via ``--since-uid-file``: a JSON file mapping
-folder name → last-seen UID. When present, only messages with higher
-UIDs are fetched. After a successful run, the file is updated in-place
-so the next invocation resumes where this one stopped.
+1. **fetch** — connect to iCloud IMAP, download every not-yet-cached
+   message's raw RFC822 bytes to ``raw-staging/apple-mail/cache/``.
+   Interruptible and resumable: already-cached UIDs are skipped
+   without a network round-trip.
+2. **parse** — read the cache from disk and emit normalized records
+   as JSONL. Pure local compute; never hits the network.
 
-The adapter never logs or prints the password. This script doesn't
-either — only the email address (which is already on disk in ``.env``).
+Use ``--skip-fetch`` to re-run just the parse phase against an existing
+cache (fast iteration on parser / sanitizer changes).
+
+Reads ``ICLOUD_EMAIL`` + ``ICLOUD_APP_PASSWORD`` from ``.env`` via
+python-dotenv. The adapter never logs the password; neither does this
+script.
 """
 
 from __future__ import annotations
@@ -24,7 +28,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from scripts._config import LocalConfig, load_config
-from sources.apple_mail.adapter import extract_mail
+from sources.apple_mail.adapter import fetch_and_cache, parse_cache
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -42,11 +46,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Path to .env file with ICLOUD_EMAIL + ICLOUD_APP_PASSWORD.",
     )
     parser.add_argument(
-        "--since-uid-file",
+        "--cache-dir",
         type=Path,
         default=None,
-        help="JSON file mapping folder name → last-seen UID for "
-        "incremental runs. Updated in-place after a successful fetch.",
+        help="Where raw .eml files are stored. Defaults to "
+        "<raw_staging_dir from config>/apple-mail/cache/.",
     )
     parser.add_argument(
         "--out-dir",
@@ -54,56 +58,57 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Where to write events.jsonl. Defaults to <raw_staging_dir from config>/apple-mail/.",
     )
+    parser.add_argument(
+        "--skip-fetch",
+        action="store_true",
+        help="Skip phase 1 (IMAP) and only re-parse the existing cache. "
+        "Useful when iterating on the parser or the sanitize stage.",
+    )
     args = parser.parse_args(argv)
-
-    if not args.env_file.exists():
-        print(
-            f"error: {args.env_file} not found. See .env.example for the shape.",
-            file=sys.stderr,
-        )
-        return 2
-    load_dotenv(args.env_file)
-    email_address = os.environ.get("ICLOUD_EMAIL", "").strip()
-    password = os.environ.get("ICLOUD_APP_PASSWORD", "")
-    if not email_address or not password:
-        print(
-            "error: ICLOUD_EMAIL and ICLOUD_APP_PASSWORD must both be set in .env.",
-            file=sys.stderr,
-        )
-        return 2
 
     cfg: LocalConfig = load_config(args.config)
     out_dir = args.out_dir if args.out_dir else cfg.raw_staging_dir / "apple-mail"
     out_dir.mkdir(parents=True, exist_ok=True)
+    cache_dir = args.cache_dir if args.cache_dir else out_dir / "cache"
     out_file = out_dir / "events.jsonl"
 
-    since_uid: dict[str, int] = {}
-    if args.since_uid_file and args.since_uid_file.exists():
-        since_uid = {k: int(v) for k, v in json.loads(args.since_uid_file.read_text()).items()}
+    # --- Phase 1: fetch to cache -----------------------------------------
+    if not args.skip_fetch:
+        if not args.env_file.exists():
+            print(
+                f"error: {args.env_file} not found. See .env.example for the shape.",
+                file=sys.stderr,
+            )
+            return 2
+        load_dotenv(args.env_file)
+        email_address = os.environ.get("ICLOUD_EMAIL", "").strip()
+        password = os.environ.get("ICLOUD_APP_PASSWORD", "")
+        if not email_address or not password:
+            print(
+                "error: ICLOUD_EMAIL and ICLOUD_APP_PASSWORD must both be set in .env.",
+                file=sys.stderr,
+            )
+            return 2
+        print(f"Phase 1: fetching mail for {email_address} → {cache_dir}")
+        new_count, already_count = fetch_and_cache(email_address, password, cache_dir)
+        print(
+            f"Phase 1 done: {new_count} new, {already_count} already cached "
+            f"(total {new_count + already_count} on disk)."
+        )
+    else:
+        print(f"Phase 1: skipped (--skip-fetch). Using existing cache at {cache_dir}.")
 
-    # Track the max UID we see per folder so we can update the resume
-    # marker after a successful run.
-    new_since_uid: dict[str, int] = dict(since_uid)
-
+    # --- Phase 2: parse cache → events.jsonl -----------------------------
+    print(f"Phase 2: parsing cache → {out_file}")
     count = 0
-    print(f"Fetching mail for {email_address} (incremental={bool(since_uid)})...")
     with out_file.open("w") as fout:
-        for record in extract_mail(email_address, password, since_uid=since_uid):
+        for record in parse_cache(cache_dir):
             fout.write(json.dumps(record) + "\n")
-            fout.flush()  # show progress in real time; wc -l on the output file is accurate
+            fout.flush()
             count += 1
-            if count % 50 == 0:
+            if count % 500 == 0:
                 print(f"  ...{count} records", file=sys.stderr, flush=True)
-            # Opportunistic resume-marker update. source_id is the
-            # Message-ID, not the UID, so we derive the UID from the
-            # mail record indirectly: left as a TODO if incremental
-            # correctness becomes an issue before the first full run.
-
-    if args.since_uid_file is not None:
-        args.since_uid_file.parent.mkdir(parents=True, exist_ok=True)
-        args.since_uid_file.write_text(json.dumps(new_since_uid, indent=2, sort_keys=True))
-
-    print(f"Extracted {count} apple-mail record(s) → {out_file}")
+    print(f"Phase 2 done: {count} records → {out_file}")
     return 0
 
 

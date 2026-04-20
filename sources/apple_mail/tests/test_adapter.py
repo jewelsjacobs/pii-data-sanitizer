@@ -15,6 +15,7 @@ Split into two groups:
 from __future__ import annotations
 
 from email.message import EmailMessage
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -27,6 +28,8 @@ from sources.apple_mail.adapter import (
     _split_address_list,
     _split_references,
     extract_mail,
+    fetch_and_cache,
+    parse_cache,
 )
 
 # ---------------------------------------------------------------------------
@@ -421,3 +424,96 @@ def test_login_failure_raises_without_logging_password() -> None:
     # The password MUST NOT appear in the exception's message chain.
     combined = f"{excinfo.value} {excinfo.value.__cause__}"
     assert "secret-pw-XYZ" not in combined
+
+
+# ---------------------------------------------------------------------------
+# Two-phase fetch_and_cache / parse_cache
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_and_cache_writes_eml_files(tmp_path: Path) -> None:
+    """Phase 1 should land one .eml per fetched UID and skip denylisted folders."""
+    fake = _FakeIMAP(
+        folders=["INBOX", "Trash", "Family"],
+        messages={
+            "INBOX": [("101", _good_raw("101", "INBOX"))],
+            "Trash": [("1", _good_raw("1", "Trash"))],  # denylisted, must not appear
+            "Family": [
+                ("201", _good_raw("201", "Family")),
+                ("202", _good_raw("202", "Family")),
+            ],
+        },
+    )
+    with patch("sources.apple_mail.adapter.imaplib.IMAP4_SSL", return_value=fake):
+        new, already = fetch_and_cache("testuser@example.invalid", "pw", tmp_path)
+    assert (new, already) == (3, 0)
+    # Trash/1.eml should NOT exist.
+    trash_files = list(tmp_path.rglob("*Trash*/*.eml"))
+    assert trash_files == []
+    # Quoted folder names: INBOX → "INBOX", Family → "Family" (no special chars).
+    assert (tmp_path / "INBOX" / "101.eml").exists()
+    assert (tmp_path / "Family" / "201.eml").exists()
+    assert (tmp_path / "Family" / "202.eml").exists()
+
+
+def test_fetch_and_cache_skips_already_cached(tmp_path: Path) -> None:
+    """Second run diffs against on-disk cache and only fetches missing UIDs."""
+    fake = _FakeIMAP(
+        folders=["INBOX"],
+        messages={
+            "INBOX": [
+                ("1", _good_raw("1", "INBOX")),
+                ("2", _good_raw("2", "INBOX")),
+            ]
+        },
+    )
+    with patch("sources.apple_mail.adapter.imaplib.IMAP4_SSL", return_value=fake):
+        first = fetch_and_cache("testuser@example.invalid", "pw", tmp_path)
+        second = fetch_and_cache("testuser@example.invalid", "pw", tmp_path)
+    assert first == (2, 0)
+    assert second == (0, 2)
+
+
+def test_fetch_and_cache_round_trips_through_parse_cache(tmp_path: Path) -> None:
+    """Fetch → parse yields the same records as a streaming extract_mail."""
+    fake = _FakeIMAP(
+        folders=["INBOX", "Family"],
+        messages={
+            "INBOX": [("1", _good_raw("1", "INBOX"))],
+            "Family": [
+                ("1", _good_raw("1", "Family")),
+                ("2", _good_raw("2", "Family")),
+            ],
+        },
+    )
+    with patch("sources.apple_mail.adapter.imaplib.IMAP4_SSL", return_value=fake):
+        fetch_and_cache("testuser@example.invalid", "pw", tmp_path)
+
+    records = list(parse_cache(tmp_path))
+    assert len(records) == 3
+    folders = sorted({r["metadata"]["folder"] for r in records})
+    assert folders == ["Family", "INBOX"]
+
+
+def test_parse_cache_handles_special_chars_in_folder_names(tmp_path: Path) -> None:
+    """Folders like ``NewEraCode/Bank of America`` round-trip through the
+    URL-quoted filesystem encoding."""
+    fake = _FakeIMAP(
+        folders=["NewEraCode/Bank of America"],
+        messages={
+            "NewEraCode/Bank of America": [
+                ("1", _good_raw("1", "folder-with-slash")),
+            ]
+        },
+    )
+    with patch("sources.apple_mail.adapter.imaplib.IMAP4_SSL", return_value=fake):
+        fetch_and_cache("testuser@example.invalid", "pw", tmp_path)
+    records = list(parse_cache(tmp_path))
+    assert len(records) == 1
+    assert records[0]["metadata"]["folder"] == "NewEraCode/Bank of America"
+
+
+def test_parse_cache_empty_dir_yields_nothing(tmp_path: Path) -> None:
+    assert list(parse_cache(tmp_path)) == []
+    # Non-existent path also yields nothing rather than erroring.
+    assert list(parse_cache(tmp_path / "nope")) == []

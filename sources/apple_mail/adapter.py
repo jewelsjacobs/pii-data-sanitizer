@@ -28,10 +28,12 @@ import imaplib
 import re
 import ssl
 import sys
+import urllib.parse
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from email.message import Message
 from hashlib import sha256
+from pathlib import Path
 from typing import Any
 
 IMAP_SERVER = "imap.mail.me.com"
@@ -384,3 +386,186 @@ def _split_references(raw: str) -> list[str]:
     if not raw:
         return []
     return [r for r in raw.split() if r.strip()]
+
+
+# ---------------------------------------------------------------------------
+# Two-phase extract: IMAP → raw .eml cache on disk → parse.
+#
+# Rationale (discovered on a real run): a full iCloud fetch can take
+# hours. If a later parsing / sanitize step needs tweaking, we do NOT
+# want to re-pay that fetch cost. Splitting fetch from parse means:
+#
+#   1. fetch_and_cache() is the slow, network-bound phase. It writes
+#      raw RFC822 bytes to disk, one .eml file per message. Re-runs
+#      skip UIDs already on disk, so interruptions cost nothing.
+#   2. parse_cache() is the fast, local-only phase. It yields the same
+#      normalized records as extract_mail but reads from the .eml
+#      cache instead of IMAP — iterate the sanitizer without touching
+#      the network.
+#
+# The streaming ``extract_mail`` path above is kept for tests and
+# callers that don't want on-disk caching.
+# ---------------------------------------------------------------------------
+
+
+def _fs_safe_folder_name(folder: str) -> str:
+    """Round-trippable filesystem-safe encoding of an IMAP folder name.
+
+    Percent-encodes every character so slashes, colons, and unicode in
+    folder names (``INBOX/Family``, ``NewEraCode/Bank of America``) fit
+    in a single path component. Decode with ``_unsafe_folder_name``.
+    """
+    return urllib.parse.quote(folder, safe="")
+
+
+def _unsafe_folder_name(dir_name: str) -> str:
+    return urllib.parse.unquote(dir_name)
+
+
+def fetch_and_cache(
+    email_address: str,
+    app_password: str,
+    cache_dir: Path,
+    *,
+    server: str = IMAP_SERVER,
+    port: int = IMAP_PORT,
+    excluded_folder_short_names: frozenset[str] = EXCLUDED_FOLDER_SHORT_NAMES,
+) -> tuple[int, int]:
+    """Phase 1 — download every non-cached message to disk.
+
+    Cache layout::
+
+        cache_dir/<quoted-folder-name>/<uid>.eml
+
+    Each ``.eml`` holds the raw RFC822 bytes exactly as the server
+    returned them. Re-runs diff the server's UIDs against the local
+    cache and only fetch the missing ones, so an interrupted run
+    resumes cheaply.
+
+    Returns ``(new_count, already_cached_count)``.
+    """
+    cache_dir = Path(cache_dir)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
+    total_new = 0
+    total_already = 0
+
+    context = ssl.create_default_context()
+    client = imaplib.IMAP4_SSL(server, port, ssl_context=context)
+    try:
+        try:
+            client.login(email_address, app_password)
+        except imaplib.IMAP4.error as exc:
+            raise AdapterError(f"IMAP login failed for {email_address}") from exc
+
+        status, folders_raw = client.list()
+        if status != "OK":
+            raise AdapterError(f"IMAP LIST failed: status={status}")
+
+        for raw_line in folders_raw or []:
+            folder_name = _parse_folder_line(raw_line)
+            if folder_name is None:
+                continue
+            short_name = folder_name.rsplit("/", 1)[-1].rsplit(".", 1)[-1]
+            if short_name.lower() in excluded_folder_short_names:
+                continue
+            new_count, already_count = _cache_folder(client, folder_name, cache_dir)
+            total_new += new_count
+            total_already += already_count
+    finally:
+        try:
+            client.logout()
+        except Exception:
+            pass
+
+    return total_new, total_already
+
+
+def _cache_folder(
+    client: imaplib.IMAP4_SSL,
+    folder_name: str,
+    cache_dir: Path,
+) -> tuple[int, int]:
+    """Fetch every not-yet-cached UID in ``folder_name`` to ``cache_dir``."""
+    quoted = f'"{folder_name}"'
+    status, _ = client.select(quoted, readonly=True)
+    if status != "OK":
+        print(f"  [{folder_name}] unreadable, skipping", file=sys.stderr, flush=True)
+        return (0, 0)
+
+    status, search_data = client.uid("SEARCH", None, "ALL")
+    if status != "OK" or not search_data or not search_data[0]:
+        print(f"  [{folder_name}] 0 messages on server", file=sys.stderr, flush=True)
+        return (0, 0)
+
+    server_uids = [u.decode("ascii") for u in search_data[0].split()]
+    folder_dir = cache_dir / _fs_safe_folder_name(folder_name)
+    folder_dir.mkdir(parents=True, exist_ok=True)
+    existing = {p.stem for p in folder_dir.glob("*.eml")}
+    to_fetch = [u for u in server_uids if u not in existing]
+    already = len(server_uids) - len(to_fetch)
+
+    if not to_fetch:
+        print(
+            f"  [{folder_name}] all {already} already cached",
+            file=sys.stderr,
+            flush=True,
+        )
+        return (0, already)
+
+    print(
+        f"  [{folder_name}] fetching {len(to_fetch)} new; {already} already cached",
+        file=sys.stderr,
+        flush=True,
+    )
+
+    new_count = 0
+    diag_budget = 3
+    for i, uid in enumerate(to_fetch, start=1):
+        status, fetch_data = client.uid("FETCH", uid, "(BODY.PEEK[])")
+        if status != "OK" or not fetch_data:
+            if diag_budget > 0:
+                print(
+                    f"    [{folder_name}] uid={uid} FETCH status={status}; "
+                    f"data_shape={[type(x).__name__ for x in (fetch_data or [])]}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                diag_budget -= 1
+            continue
+        body = _extract_rfc822_bytes(fetch_data)
+        if body is None:
+            if diag_budget > 0:
+                print(
+                    f"    [{folder_name}] uid={uid} no body; preview={repr(fetch_data)[:400]}",
+                    file=sys.stderr,
+                    flush=True,
+                )
+                diag_budget -= 1
+            continue
+        (folder_dir / f"{uid}.eml").write_bytes(body)
+        new_count += 1
+        if i % 100 == 0:
+            print(f"    [{folder_name}] {i}/{len(to_fetch)}", file=sys.stderr, flush=True)
+
+    return (new_count, already)
+
+
+def parse_cache(cache_dir: Path) -> Iterator[dict[str, Any]]:
+    """Phase 2 — yield one normalized record per cached ``.eml``.
+
+    Walks folder directories in sorted order, then UIDs within each
+    folder in sorted order. Never touches the network; safe to run
+    repeatedly. Uses the same ``_parse_message`` path as the streaming
+    ``extract_mail`` — output is identical for a given cache.
+    """
+    cache_dir = Path(cache_dir)
+    if not cache_dir.exists():
+        return
+    for folder_dir in sorted(cache_dir.iterdir()):
+        if not folder_dir.is_dir():
+            continue
+        folder_name = _unsafe_folder_name(folder_dir.name)
+        for eml_file in sorted(folder_dir.glob("*.eml")):
+            raw = eml_file.read_bytes()
+            yield _parse_message(raw, folder_name=folder_name)
