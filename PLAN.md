@@ -138,9 +138,8 @@ The filesystem-level gate between raw and clean staging.
 
 ## Where we are
 
-Current milestone: **M4a + M4c complete.** Next up: **M4b — imessage adapter
-(reordered after M4c at user request; original PLAN order was M4a → M4b →
-M4c, but the user wanted email before iMessage).**
+Current milestone: **M4a + M4b + M4c complete (all adapters built).**
+Next up: **M5 — LLM auditor.**
 
 M3 notes: `sources/ical/adapter.py`, `sanitizer/manifest.py`,
 `scripts/extract_ical.py`, `scripts/sanitize_source.py`. Ical run
@@ -181,6 +180,37 @@ drives the adapter; Makefile target: `make extract-apple-mail`.
 Test suite: 104 passing (22 new apple-mail cases, including
 mocked-IMAP deny-list / UID pagination / credential-leak guards).
 python-dotenv added as a direct dependency.
+
+M4b notes: `sources/imessage/adapter.py` snapshots `chat.db` (plus the
+WAL / SHM sidecars) to `raw-staging/imessage/snapshot.db`, then reads
+the snapshot in read-only mode via a `file:...?mode=ro` SQLite URI.
+The SQL joins `message × handle × chat × chat_message_join` and
+aggregates attachment counts. Apple Cocoa timestamps are decoded
+whether they're in seconds (pre-Mojave) or nanoseconds (post-Mojave).
+Tapbacks / reactions (`associated_message_type` 2000-series and
+3000-series) and unsent messages (`date_retracted != 0`) are skipped
+silently. Edited messages use their final text with
+`metadata.was_edited: true`. `attributedBody` fallback uses a
+heuristic typedstream decoder when the `text` column is NULL —
+handles most single-run bodies; the M5 LLM auditor is the safety net
+for the rest. `scripts/extract_imessage.py` drives it from
+`imessage_chat_db_path` in `config/local.json`. Makefile target:
+`make extract-imessage`. Test suite: 131 passing (21 new imessage
+cases covering Apple-epoch conversion, typedstream decode, snapshot
+behavior, tapback / unsent / edited / reply / attachment flags,
+read-only enforcement).
+
+**Post-M4 note on apple-mail:** after the original M4c, the extract
+was refactored into two phases — `fetch_and_cache` writes raw `.eml`
+bytes to `raw-staging/apple-mail/cache/<quoted-folder>/<uid>.eml`
+(resumable, already-cached UIDs skipped without a network call), and
+`parse_cache` yields records from the cache. `--skip-fetch` re-runs
+phase 2 only, for fast parser iteration. A live iCloud run produced
+10k+ records after several policy relaxations (missing Date headers
+fall back to the last `Received:` header and flag
+`metadata.date_synthesized: true`; legacy RFC822 fetch item swapped
+for `BODY.PEEK[]`; UID bytes decoded to str before passing to
+`imaplib.uid`).
 
 ## Rules for working the plan
 

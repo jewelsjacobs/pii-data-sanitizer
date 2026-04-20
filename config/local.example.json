@@ -11,6 +11,9 @@
     "/Users/REPLACEME/Documents/to-sanitize"
   ],
 
+  "_comment_imessage": "Path to the real chat.db. On macOS it's ~/Library/Messages/chat.db. Terminal needs Full Disk Access. The adapter copies this to raw-staging/imessage/snapshot.db at run start and never writes to the source.",
+  "imessage_chat_db_path": "/Users/REPLACEME/Library/Messages/chat.db",
+
   "self_emails": [
     "you@example.invalid"
   ],
