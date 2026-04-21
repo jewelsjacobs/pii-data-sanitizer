@@ -48,10 +48,26 @@ def main(argv: list[str] | None = None) -> int:
     clean_dir.mkdir(parents=True, exist_ok=True)
     clean_file = clean_dir / "events.jsonl"
 
+    # Count raw records up front so the progress line can show N/total.
+    # One line per record, so wc-l is correct. Extra cost is trivial
+    # compared to the NER run that follows.
+    total = sum(1 for line in raw_file.open() if line.strip())
+    print(
+        f"Sanitizing {total} {args.source} record(s) from {raw_file}\n"
+        f"   → {clean_file}\n"
+        f"   mapping: {cfg.mapping_path}",
+        file=sys.stderr,
+        flush=True,
+    )
+
     entity_counts: Counter[str] = Counter()
     records_in = 0
     records_out = 0
     new_assignments = 0
+    # Save the mapping every this-many records so a crashed run doesn't
+    # lose any new pseudonyms already assigned.
+    _mapping_save_interval = 500
+    cfg.mapping_path.parent.mkdir(parents=True, exist_ok=True)
 
     with raw_file.open() as fin, clean_file.open("w") as fout:
         for line in fin:
@@ -72,9 +88,19 @@ def main(argv: list[str] | None = None) -> int:
                     entity_counts[kind] += delta
                     new_assignments += delta
             fout.write(json.dumps(sanitized) + "\n")
+            fout.flush()  # so `wc -l` on the output file shows progress
             records_out += 1
+            if records_out % 50 == 0:
+                pct = (records_out / total * 100) if total else 0.0
+                print(
+                    f"  {records_out}/{total} ({pct:.1f}%) — "
+                    f"{sum(entity_counts.values())} entities pseudonymized",
+                    file=sys.stderr,
+                    flush=True,
+                )
+            if records_out % _mapping_save_interval == 0:
+                mapping.save(cfg.mapping_path)
 
-    cfg.mapping_path.parent.mkdir(parents=True, exist_ok=True)
     mapping.save(cfg.mapping_path)
     manifest_path = write_manifest(
         clean_dir,
