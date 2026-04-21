@@ -517,3 +517,80 @@ def test_parse_cache_empty_dir_yields_nothing(tmp_path: Path) -> None:
     assert list(parse_cache(tmp_path)) == []
     # Non-existent path also yields nothing rather than erroring.
     assert list(parse_cache(tmp_path / "nope")) == []
+
+
+def test_fetch_and_cache_reconnects_on_abort(tmp_path: Path) -> None:
+    """iCloud drops long-running connections. The adapter must catch
+    the abort, back off, reconnect, and resume — already-cached UIDs
+    get skipped on the retry so no duplicate work happens."""
+    import imaplib as stdlib_imaplib
+
+    call_count = {"n": 0}
+
+    def _factory(*args: Any, **kwargs: Any) -> _FakeIMAP:
+        call_count["n"] += 1
+        fake = _FakeIMAP(
+            folders=["INBOX"],
+            messages={
+                "INBOX": [
+                    ("1", _good_raw("1", "INBOX")),
+                    ("2", _good_raw("2", "INBOX")),
+                    ("3", _good_raw("3", "INBOX")),
+                ]
+            },
+        )
+        if call_count["n"] == 1:
+            # On the first connection, fail mid-fetch (after a couple of UIDs).
+            real_uid = fake.uid
+            fake_uid_calls = {"n": 0}
+
+            def flaky_uid(cmd: str, *args: Any) -> tuple[str, list[Any]]:
+                if cmd == "FETCH":
+                    fake_uid_calls["n"] += 1
+                    if fake_uid_calls["n"] >= 2:
+                        raise stdlib_imaplib.IMAP4.abort("socket error: EOF")
+                return real_uid(cmd, *args)
+
+            fake.uid = flaky_uid  # type: ignore[method-assign]
+        return fake
+
+    with (
+        patch("sources.apple_mail.adapter.imaplib.IMAP4_SSL", side_effect=_factory),
+        patch("sources.apple_mail.adapter.time.sleep"),  # don't actually sleep in tests
+    ):
+        new, already = fetch_and_cache(
+            "testuser@example.invalid",
+            "pw",
+            tmp_path,
+            max_reconnects=3,
+        )
+
+    # After reconnect, all 3 messages land on disk exactly once.
+    assert call_count["n"] == 2  # one dropped, one successful
+    eml_files = sorted(p.name for p in (tmp_path / "INBOX").glob("*.eml"))
+    assert eml_files == ["1.eml", "2.eml", "3.eml"]
+    assert new >= 1  # fresh work was done on the successful attempt
+    assert already >= 0
+
+
+def test_fetch_and_cache_gives_up_after_max_reconnects(tmp_path: Path) -> None:
+    """If the connection keeps dropping, raise a clear AdapterError."""
+    import imaplib as stdlib_imaplib
+
+    def _always_abort(*args: Any, **kwargs: Any) -> Any:
+        fake = MagicMock()
+        fake.login.return_value = ("OK", [b"ok"])
+        fake.list.side_effect = stdlib_imaplib.IMAP4.abort("forever broken")
+        return fake
+
+    with (
+        patch("sources.apple_mail.adapter.imaplib.IMAP4_SSL", side_effect=_always_abort),
+        patch("sources.apple_mail.adapter.time.sleep"),
+    ):
+        with pytest.raises(AdapterError, match="kept dropping"):
+            fetch_and_cache(
+                "testuser@example.invalid",
+                "pw",
+                tmp_path,
+                max_reconnects=2,
+            )

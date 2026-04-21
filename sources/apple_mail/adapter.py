@@ -28,6 +28,7 @@ import imaplib
 import re
 import ssl
 import sys
+import time
 import urllib.parse
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -430,6 +431,7 @@ def fetch_and_cache(
     server: str = IMAP_SERVER,
     port: int = IMAP_PORT,
     excluded_folder_short_names: frozenset[str] = EXCLUDED_FOLDER_SHORT_NAMES,
+    max_reconnects: int = 5,
 ) -> tuple[int, int]:
     """Phase 1 — download every non-cached message to disk.
 
@@ -442,11 +444,70 @@ def fetch_and_cache(
     cache and only fetch the missing ones, so an interrupted run
     resumes cheaply.
 
-    Returns ``(new_count, already_cached_count)``.
+    iCloud IMAP drops long-running connections without warning. When
+    that happens this function catches the ``imaplib.IMAP4.abort`` /
+    ``OSError``, backs off, reconnects, and resumes — the inner loop
+    walks folders in order, diffing server UIDs against on-disk
+    ``.eml`` files, so already-cached messages cost one ``SELECT`` +
+    ``SEARCH`` per folder and nothing else.
+
+    Returns ``(new_count, already_cached_count)`` aggregated across
+    every reconnect attempt.
     """
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
 
+    total_new = 0
+    total_already = 0
+
+    for attempt in range(max_reconnects + 1):
+        try:
+            new, already = _fetch_and_cache_once(
+                email_address,
+                app_password,
+                cache_dir,
+                server=server,
+                port=port,
+                excluded_folder_short_names=excluded_folder_short_names,
+            )
+            total_new += new
+            # `already` from the last successful run reflects the full
+            # cache state; earlier attempts' counts are subsumed.
+            total_already = already
+            return total_new, total_already
+        except (imaplib.IMAP4.abort, OSError) as exc:
+            if attempt >= max_reconnects:
+                raise AdapterError(
+                    f"IMAP connection kept dropping after {max_reconnects} reconnects: {exc}. "
+                    f"Re-run the extract — cached messages are preserved."
+                ) from exc
+            backoff = min(60, 5 * (2**attempt))
+            print(
+                f"\nIMAP connection dropped ({type(exc).__name__}: {exc}). "
+                f"Reconnecting in {backoff}s "
+                f"(attempt {attempt + 1}/{max_reconnects})...",
+                file=sys.stderr,
+                flush=True,
+            )
+            time.sleep(backoff)
+
+    # Unreachable; the loop either returns or raises above.
+    return total_new, total_already
+
+
+def _fetch_and_cache_once(
+    email_address: str,
+    app_password: str,
+    cache_dir: Path,
+    *,
+    server: str,
+    port: int,
+    excluded_folder_short_names: frozenset[str],
+) -> tuple[int, int]:
+    """One IMAP connection's worth of work. Either completes fully and
+    returns ``(new, already)``, or raises ``imaplib.IMAP4.abort`` /
+    ``OSError`` partway (which the outer retry loop catches).
+    """
     total_new = 0
     total_already = 0
 
@@ -456,6 +517,7 @@ def fetch_and_cache(
         try:
             client.login(email_address, app_password)
         except imaplib.IMAP4.error as exc:
+            # Bad credentials — don't retry, those failures aren't transient.
             raise AdapterError(f"IMAP login failed for {email_address}") from exc
 
         status, folders_raw = client.list()
