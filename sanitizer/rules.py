@@ -46,17 +46,29 @@ RULES: list[Rule] = [
         pattern=re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"),
         replacement="[REDACTED_TOKEN]",
     ),
-    # Conference URLs run early: their query strings often contain
-    # `?pwd=...` which would otherwise be caught by the labeled_password
-    # rule downstream and leave an unmatched `]` after the URL redaction.
+    # --- Links + URLs -----------------------------------------------------
+    # URL handling runs before everything else that could chew on URL
+    # contents (labeled_password chasing `?pwd=`, NER mis-tagging
+    # `utm_source=outfordelivery` as an ORG, etc.). Every form collapses
+    # to a single `[REDACTED_LINK]` token — tracking numbers, session
+    # IDs, UTM params, and conference auth tokens all disappear uniformly.
+    #
+    # Order matters: markdown_link first so `[text](url)` is consumed
+    # atomically, then bare_url for the rest.
     Rule(
-        name="conference_url",
-        pattern=re.compile(
-            r"https?://(?:[a-z0-9.-]*\.)?"
-            r"(?:zoom\.us|meet\.google\.com|webex\.com|teams\.microsoft\.com)"
-            r"/\S*?(?=[.,;!?)\]\"']?(?:\s|$))"
-        ),
-        replacement="[REDACTED_CONFERENCE_URL]",
+        name="markdown_link",
+        # `!?[...](...)` including the image variant. re.DOTALL lets the
+        # URL span html2text's wrapped lines. Lazy `.*?` stops at the
+        # first `](` / `)` so adjacent links don't glom together.
+        pattern=re.compile(r"!?\[.*?\]\(.*?\)", re.DOTALL),
+        replacement="[REDACTED_LINK]",
+    ),
+    Rule(
+        name="bare_url",
+        # Any remaining http/https URL. Same non-greedy trailing-punct
+        # trick used elsewhere so `visit https://x.com.` keeps the `.`.
+        pattern=re.compile(r"https?://\S*?(?=[.,;!?)\]\"']?(?:\s|$))"),
+        replacement="[REDACTED_LINK]",
     ),
     # --- known prefix tokens -------------------------------------------------
     Rule(

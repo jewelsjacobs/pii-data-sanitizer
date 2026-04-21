@@ -68,8 +68,8 @@ def test_extract_sanitize_manifest_roundtrip(tmp_path: Path) -> None:
 
     clean_records = [json.loads(line) for line in clean_file.read_text().splitlines()]
     assert len(clean_records) == 1
-    # Conference URL is redacted by the sanitizer's rules layer.
-    assert clean_records[0]["metadata"]["url"] == "[REDACTED_CONFERENCE_URL]"
+    # Any URL — conference or otherwise — collapses to [REDACTED_LINK].
+    assert clean_records[0]["metadata"]["url"] == "[REDACTED_LINK]"
     # Raw attendee email gets pseudonymized.
     assert "alex@example.invalid" not in json.dumps(clean_records[0])
 

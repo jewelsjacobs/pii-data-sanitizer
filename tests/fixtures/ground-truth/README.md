@@ -70,8 +70,16 @@ Hard-redact tokens (from the entity catalog):
 `[REDACTED_CREDENTIAL]`, `[REDACTED_API_KEY]`, `[REDACTED_TOKEN]`,
 `[REDACTED_PRIVATE_KEY]`, `[REDACTED_CARD]`, `[REDACTED_ACCOUNT]`,
 `[REDACTED_ROUTING]`, `[REDACTED_SSN]`, `[REDACTED_IP]`,
-`[REDACTED_COORDS]`, `[REDACTED_HEADER]`, `[REDACTED_CONFERENCE_URL]`,
+`[REDACTED_COORDS]`, `[REDACTED_HEADER]`, `[REDACTED_LINK]`,
 `[HOME_ADDRESS]`, `[ATTACHMENT_SKIPPED]`.
+
+`[REDACTED_LINK]` is used for **every** URL-shaped thing: markdown
+`[text](url)` collapses to a single token (display text and URL both
+go), bare `http(s)://...` URLs likewise. This deliberately wipes
+tracking numbers, order IDs, session tokens, UTM params, and
+conference auth codes — they carry pattern-of-life signal and the
+vault doesn't need them. `[REDACTED_CONFERENCE_URL]` is retired; if
+you see it in an older fixture it should be rewritten.
 
 ## What is kept
 

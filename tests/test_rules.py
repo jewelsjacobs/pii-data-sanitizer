@@ -31,8 +31,10 @@ from sanitizer.rules import apply_rules
         ("gateway: 2001:db8::1", "[REDACTED_IP]"),
         (
             "https://zoom.us/j/1234567890?pwd=abcdefghijklmnopqr",
-            "[REDACTED_CONFERENCE_URL]",
+            "[REDACTED_LINK]",
         ),
+        ("[click here](https://example.com/path?id=abc)", "[REDACTED_LINK]"),
+        ("visit https://tools.usps.com/go/TrackConfirm", "[REDACTED_LINK]"),
     ],
 )
 def test_hard_redacts(text: str, expected_token: str) -> None:
@@ -62,7 +64,42 @@ def test_apply_rules_is_idempotent() -> None:
     assert once == twice
 
 
-def test_conference_url_in_query_string_does_not_leak_bracket() -> None:
-    """URL `?pwd=...` redacts cleanly even though the pwd label also matches."""
+def test_url_with_pwd_query_string_collapses_to_single_token() -> None:
+    """URL `?pwd=...` redacts cleanly — the whole URL becomes one
+    [REDACTED_LINK] token rather than leaking the query value."""
     out = apply_rules("Join: https://zoom.us/j/1?pwd=xYz123")
-    assert out == "Join: [REDACTED_CONFERENCE_URL]"
+    assert out == "Join: [REDACTED_LINK]"
+
+
+def test_markdown_link_redacted_atomically() -> None:
+    """`[text](url)` collapses to [REDACTED_LINK] — neither the display
+    text nor the URL leaks through."""
+    out = apply_rules(
+        "See [Tracking 9200190327101300024246](https://tools.usps.com/go/Track?tLabels=9200190327101300024246)"
+    )
+    assert out == "See [REDACTED_LINK]"
+
+
+def test_markdown_image_link_also_redacted() -> None:
+    """Image-link shape `![alt](url)` is still a URL reference."""
+    out = apply_rules("![chart](https://example.com/img.png)")
+    assert out == "[REDACTED_LINK]"
+
+
+def test_multiline_markdown_link() -> None:
+    """html2text wraps long URLs across lines; the redactor must still match."""
+    wrapped = "[Tracking](https://tools.usps.com/go/TrackConfirm?tLabels=abc\n&utm_source=delivery)"
+    out = apply_rules(wrapped)
+    assert out == "[REDACTED_LINK]"
+
+
+def test_bare_url_keeps_trailing_sentence_punctuation() -> None:
+    """A period or comma after a URL stays outside the redaction."""
+    out = apply_rules("visit https://example.com. Next sentence.")
+    assert out == "visit [REDACTED_LINK]. Next sentence."
+
+
+def test_non_url_brackets_left_alone() -> None:
+    """`[n]` without `(url)` next to it is not a markdown link."""
+    text = "Footnote [1] in the paper; array index arr[2]."
+    assert apply_rules(text) == text
