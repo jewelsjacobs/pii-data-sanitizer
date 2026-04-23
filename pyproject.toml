@@ -12,6 +12,7 @@ dependencies = [
     "icalendar",
     "html2text",
     "python-dotenv",
+    "ollama",
     "presidio-analyzer",
     "presidio-anonymizer",
     "spacy",

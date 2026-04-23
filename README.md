@@ -22,6 +22,16 @@ make lint
 
 `make install` runs `uv sync` and creates the local staging directories. Python 3.11+ and [`uv`](https://docs.astral.sh/uv/) are required.
 
+The audit step (`make audit`) uses a local Ollama model. Optional one-time setup:
+
+```
+brew install ollama           # if you don't have it
+ollama serve &                # or let the install's service start
+ollama pull qwen2.5:14b-instruct   # or qwen2.5:7b-instruct for faster iteration
+```
+
+Override the default model via the `AUDIT_MODEL` env var or the `--model` flag on `scripts.audit_source`.
+
 ## A note on test fixtures
 
 Ground-truth fixtures under `tests/fixtures/ground-truth/` are **intentionally local-only** and not version-controlled. Even though the content is hand-written and synthetic, it pattern-matches as credential / address / SSN data and is best kept off any remote host. Only `tests/fixtures/ground-truth/README.md` ships with the repo, describing the fixture shape so the tree can be rebuilt from scratch.
@@ -34,6 +44,6 @@ Ground-truth fixtures under `tests/fixtures/ground-truth/` are **intentionally l
 | `make test`     | Run the pytest suite.                                            |
 | `make lint`     | `ruff check` + `ruff format --check`.                            |
 | `make format`   | Apply `ruff format` and `ruff check --fix`.                      |
-| `make extract`  | Run source adapters (not implemented until M3/M4).               |
-| `make sanitize` | Run the sanitizer over `/raw-staging` (not implemented until M2). |
-| `make audit`    | Run the LLM auditor over `/clean-staging` (not implemented until M5). |
+| `make extract`  | Run every source adapter (ical, local-files, apple-mail, imessage).  |
+| `make sanitize` | Run the sanitizer over each source's `/raw-staging` output.          |
+| `make audit`    | Run the Ollama-backed LLM auditor over `/clean-staging` and write findings to `logs/audit/`. |

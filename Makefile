@@ -1,4 +1,4 @@
-.PHONY: install test lint format extract extract-ical extract-local-files extract-apple-mail extract-imessage sanitize sanitize-ical sanitize-local-files sanitize-apple-mail sanitize-imessage audit
+.PHONY: install test lint format extract extract-ical extract-local-files extract-apple-mail extract-imessage sanitize sanitize-ical sanitize-local-files sanitize-apple-mail sanitize-imessage audit audit-ical audit-local-files audit-apple-mail audit-imessage
 
 install:
 	uv sync
@@ -43,6 +43,16 @@ sanitize-apple-mail:
 sanitize-imessage:
 	uv run python -m scripts.sanitize_source --source imessage
 
-audit:
-	@echo "audit: not implemented yet — see PLAN.md (M5)"
-	@exit 1
+audit: audit-ical audit-local-files audit-apple-mail audit-imessage
+
+audit-ical:
+	uv run python -m scripts.audit_source --source ical
+
+audit-local-files:
+	uv run python -m scripts.audit_source --source local-files
+
+audit-apple-mail:
+	uv run python -m scripts.audit_source --source apple-mail
+
+audit-imessage:
+	uv run python -m scripts.audit_source --source imessage

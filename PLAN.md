@@ -138,8 +138,7 @@ The filesystem-level gate between raw and clean staging.
 
 ## Where we are
 
-Current milestone: **M4a + M4b + M4c complete (all adapters built).**
-Next up: **M5 — LLM auditor.**
+Current milestone: **M5 complete.** Next up: **M6 — First real full run.**
 
 M3 notes: `sources/ical/adapter.py`, `sanitizer/manifest.py`,
 `scripts/extract_ical.py`, `scripts/sanitize_source.py`. Ical run
@@ -210,7 +209,24 @@ phase 2 only, for fast parser iteration. A live iCloud run produced
 fall back to the last `Received:` header and flag
 `metadata.date_synthesized: true`; legacy RFC822 fetch item swapped
 for `BODY.PEEK[]`; UID bytes decoded to str before passing to
-`imaplib.uid`).
+`imaplib.uid`). A later iteration (after the first real full run)
+unified all URL shapes — markdown `[text](url)`, bare `http(s)://` —
+into a single `[REDACTED_LINK]` token to stop URL-param NER churn and
+drop tracking-number / UTM / session-ID pattern-of-life signal.
+
+M5 notes: `sanitizer/auditor.py` wraps the Ollama Python SDK with
+`audit_record`, `audit_source`, and `resolve_model`. Default model is
+`qwen2.5:14b-instruct` with a `qwen2.5:7b-instruct` fallback; both
+overridable via `AUDIT_MODEL` env var or `--model` flag on
+`scripts.audit_source`. Keep-list (user's first name + allow-listed
+GPEs) is injected into the system prompt at runtime so the committed
+source stays generic. Auditor is read-only — findings land in
+`logs/audit/<run-id>/<source>.jsonl`, never in clean-staging.
+`--sample N` audits a random subset (default 100) so first runs
+don't turn into a many-hour sequential-LLM wall. Makefile targets:
+`make audit` (all sources) and `make audit-<source>`. 161 tests
+passing (21 new auditor cases mocking Ollama; no real Ollama
+connection required for tests).
 
 ## Rules for working the plan
 
