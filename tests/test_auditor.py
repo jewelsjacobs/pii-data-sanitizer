@@ -156,7 +156,7 @@ def test_audit_record_returns_parsed_findings() -> None:
     record = {
         "source": "apple-mail",
         "source_id": "<abc@x.invalid>",
-        "content": "Hi Jahna",
+        "content": "Hi Jahna",  # excerpt is a literal substring → survives verifier
         "metadata": {},
     }
     findings = audit_record(record, client=client, model_name="test-model")
@@ -165,6 +165,169 @@ def test_audit_record_returns_parsed_findings() -> None:
     assert findings[0].source_id == "<abc@x.invalid>"
     assert findings[0].excerpt == "Jahna"
     client.chat.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Verifier (hallucination / keep-list / severity guards)
+# ---------------------------------------------------------------------------
+
+
+def _finding_response(*findings: dict[str, Any]) -> str:
+    return json.dumps({"findings": list(findings)})
+
+
+def test_verifier_drops_hallucinated_excerpt_not_in_source() -> None:
+    """LLM invented a name that's not in the record — must be dropped."""
+    client = _fake_client(
+        _finding_response(
+            {
+                "severity": "medium",
+                "category": "name",
+                "excerpt": "Familiar",  # NOT in content
+                "reasoning": "looks like a name",
+            }
+        )
+    )
+    record = {
+        "source": "apple-mail",
+        "source_id": "1",
+        "content": "I'm a 15 year old kid",
+        "metadata": {},
+    }
+    assert audit_record(record, client=client, model_name="m") == []
+
+
+def test_verifier_drops_finding_that_equals_a_keep_list_name() -> None:
+    """LLM flags 'Lea' in 'Dear Lea'; Lea is on keep-list → drop."""
+    client = _fake_client(
+        _finding_response(
+            {
+                "severity": "low",
+                "category": "name",
+                "excerpt": "Lea",
+                "reasoning": "first name in personal context",
+            }
+        )
+    )
+    record = {
+        "source": "apple-mail",
+        "source_id": "1",
+        "content": "Dear Lea, hope you're well.",
+        "metadata": {},
+    }
+    config = AuditConfig(keep_names=frozenset({"Lea"}))
+    assert audit_record(record, client=client, model_name="m", config=config) == []
+
+
+def test_verifier_drops_compound_name_containing_keep_list_entry() -> None:
+    """'Lea Chen' contains 'Lea' which is on the keep-list → drop."""
+    client = _fake_client(
+        _finding_response(
+            {
+                "severity": "medium",
+                "category": "name",
+                "excerpt": "Lea Chen",
+                "reasoning": "full name",
+            }
+        )
+    )
+    record = {
+        "source": "apple-mail",
+        "source_id": "1",
+        "content": "Sincerely, Lea Chen",
+        "metadata": {},
+    }
+    config = AuditConfig(keep_names=frozenset({"Lea"}))
+    assert audit_record(record, client=client, model_name="m", config=config) == []
+
+
+def test_verifier_drops_bracketed_token_excerpt() -> None:
+    """LLM mis-flags [PERSON_1] as a leak — must be dropped."""
+    client = _fake_client(
+        _finding_response(
+            {
+                "severity": "medium",
+                "category": "name",
+                "excerpt": "[PERSON_1]",
+                "reasoning": "a name",
+            }
+        )
+    )
+    record = {
+        "source": "apple-mail",
+        "source_id": "1",
+        "content": "Hi [PERSON_1]",
+        "metadata": {},
+    }
+    assert audit_record(record, client=client, model_name="m") == []
+
+
+def test_verifier_forces_high_severity_for_credential_category() -> None:
+    """Model returned credential at 'medium'; verifier must upgrade to 'high'."""
+    client = _fake_client(
+        _finding_response(
+            {
+                "severity": "medium",
+                "category": "credential",
+                "excerpt": "hunter2xyz",
+                "reasoning": "looks like a password",
+            }
+        )
+    )
+    record = {
+        "source": "apple-mail",
+        "source_id": "1",
+        "content": "password: hunter2xyz",
+        "metadata": {},
+    }
+    [finding] = audit_record(record, client=client, model_name="m")
+    assert finding.severity == "high"
+    assert finding.category == "credential"
+
+
+def test_verifier_preserves_legitimate_high_severity_finding() -> None:
+    """A well-formed real leak survives every filter intact."""
+    client = _fake_client(
+        _finding_response(
+            {
+                "severity": "high",
+                "category": "phone",
+                "excerpt": "555-123-4567",
+                "reasoning": "phone number in plain text",
+            }
+        )
+    )
+    record = {
+        "source": "apple-mail",
+        "source_id": "1",
+        "content": "Call me at 555-123-4567",
+        "metadata": {},
+    }
+    [finding] = audit_record(record, client=client, model_name="m")
+    assert finding.excerpt == "555-123-4567"
+    assert finding.severity == "high"
+
+
+def test_verifier_checks_metadata_not_just_content() -> None:
+    """Excerpt found only in a metadata field still counts as present."""
+    client = _fake_client(
+        _finding_response(
+            {
+                "severity": "medium",
+                "category": "email",
+                "excerpt": "boss@example.invalid",
+                "reasoning": "email in From header",
+            }
+        )
+    )
+    record = {
+        "source": "apple-mail",
+        "source_id": "1",
+        "content": "",
+        "metadata": {"from": "Boss <boss@example.invalid>"},
+    }
+    [finding] = audit_record(record, client=client, model_name="m")
+    assert finding.excerpt == "boss@example.invalid"
 
 
 def test_audit_record_keep_list_is_injected_into_system_prompt() -> None:

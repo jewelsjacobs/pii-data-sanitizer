@@ -106,6 +106,17 @@ SYSTEM_PROMPT = "\n".join(
         "[REDACTED_SSN], and similar. Anything in square brackets is already",
         "redacted.",
         "",
+        "CRITICAL RULES for your output:",
+        "- `excerpt` MUST be the literal PII string you're flagging (e.g. a",
+        '  name like "Alex", an email like "alex@x.invalid", a number like',
+        '  "555-1234"). Not the surrounding sentence. Just the PII itself.',
+        "- `excerpt` MUST be a literal substring of the CONTENT or METADATA",
+        "  shown in the user message. Never summarize, paraphrase, or invent.",
+        "  A downstream verifier will reject any finding whose excerpt is",
+        "  not found verbatim in the source.",
+        "- If you would report context or a whole sentence, put only the",
+        "  offending substring in `excerpt` and explain in `reasoning`.",
+        "",
         "FLAG anything that could identify a specific real person, place, or",
         "account:",
         "- First or last names in plain text (not replaced with [PERSON_N])",
@@ -114,6 +125,9 @@ SYSTEM_PROMPT = "\n".join(
         "  or bare digit runs of 10+ characters",
         "- Street addresses (number + street suffix) in plain text",
         "- Credit card numbers, SSNs, routing numbers, bank account numbers",
+        "- Government / health IDs: DSHS or other state client IDs, Medicare",
+        "  numbers, Medicaid IDs, driver license numbers, passport numbers,",
+        "  health-insurance member IDs, policy numbers, case numbers",
         "- API keys, passwords, OAuth tokens in plain text",
         "- Specific employer / school / healthcare-provider names in personal context",
         "",
@@ -131,16 +145,17 @@ SYSTEM_PROMPT = "\n".join(
         "SEVERITY GUIDE (use consistently):",
         '- "high": credentials and secrets (passwords, API keys, OAuth tokens,',
         "  2FA codes, private keys), financial identifiers (SSN, credit card,",
-        "  bank account, routing number), home street address, real-time location.",
+        "  bank account, routing number), government / health IDs, home street",
+        "  address, real-time location.",
         '- "medium": phone numbers, email addresses, full personal names,',
         "  non-home street addresses, medical diagnoses linked to a person.",
         '- "low": first-name-only references, employer / school names without',
         "  personal context, approximate location (city/state only), other",
         "  context-sensitive but non-identifying fragments.",
         "",
-        "When unsure about credentials or financial data, always err toward",
-        '"high" — those are the categories the downstream vault cannot afford',
-        "to leak.",
+        "When unsure about credentials, financial data, or government /",
+        'health IDs, always err toward "high" — those are categories the',
+        "downstream vault cannot afford to leak.",
         "",
         "Output strictly valid JSON, no prose outside JSON, matching:",
         "",
@@ -148,9 +163,20 @@ SYSTEM_PROMPT = "\n".join(
         '"name|email|phone|address|credential|other", "excerpt": "...", '
         '"reasoning": "..."}]}',
         "",
-        'If nothing is suspect, return {"findings": []}.',
+        'If nothing is suspect, return {"findings": []}. Prefer returning an',
+        "empty list over inventing a finding.",
     ]
 )
+
+
+# Severity overrides: if the category says credential or financial, force
+# severity to "high" regardless of what the model picked. The rubric in the
+# prompt asks for this but models don't follow it consistently.
+_HIGH_SEVERITY_CATEGORIES = frozenset({"credential"})
+
+# Regex for a bare sanitizer token — used to drop findings that "flag"
+# the very token the sanitizer produced.
+_BRACKETED_TOKEN_RE = re.compile(r"^\s*\[[A-Z_]+(?:_\d+)?\]\s*$")
 
 
 def _keep_list_prompt(config: AuditConfig) -> str:
@@ -231,8 +257,13 @@ def audit_record(
 ) -> list[Finding]:
     """Run one sanitized record through the LLM auditor.
 
-    Returns zero or more ``Finding``s. Passing ``client`` is for tests
-    — production callers let the default ``ollama.Client()`` get built.
+    Returns zero or more ``Finding``s. Every raw LLM finding is passed
+    through ``_verify_finding`` to drop hallucinations, keep-list
+    matches, and bracketed-token self-flags; severity is forced to
+    ``"high"`` for credential / financial / government-ID categories.
+
+    Passing ``client`` is for tests — production callers let the default
+    ``ollama.Client()`` get built.
     """
     if client is None:
         import ollama
@@ -259,7 +290,86 @@ def audit_record(
         raise AuditorError(f"Ollama chat failed with model {model_name}: {exc}") from exc
 
     text = _extract_message_content(response)
-    return list(_parse_findings(text, record))
+    haystack = _searchable_text(record)
+    verified: list[Finding] = []
+    for raw in _parse_findings(text, record):
+        finding = _verify_finding(raw, haystack=haystack, config=config)
+        if finding is not None:
+            verified.append(finding)
+    return verified
+
+
+def _searchable_text(record: dict[str, Any]) -> str:
+    """Concatenate everything the auditor was allowed to see so the
+    verifier can confirm excerpts are literal substrings of the source.
+    """
+    parts: list[str] = [str(record.get("content", "") or "")]
+    metadata = record.get("metadata", {}) or {}
+    for value in metadata.values():
+        if isinstance(value, str):
+            parts.append(value)
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, str):
+                    parts.append(item)
+    return "\n".join(parts)
+
+
+def _verify_finding(
+    finding: Finding,
+    *,
+    haystack: str,
+    config: AuditConfig,
+) -> Finding | None:
+    """Deterministic post-filter. Returns ``None`` to drop, else a (possibly
+    severity-upgraded) ``Finding``.
+
+    Filters in order:
+    1. Drop if ``excerpt`` is empty.
+    2. Drop if ``excerpt`` is just one of our sanitizer tokens (``[FOO_N]``).
+    3. Drop if ``excerpt`` is not a literal substring of ``haystack`` —
+       catches hallucinated names and made-up context.
+    4. Drop if ``excerpt`` contains (or equals) a keep-list entry.
+    5. Upgrade severity to ``"high"`` for credential/financial categories.
+    """
+    excerpt = finding.excerpt.strip()
+    if not excerpt:
+        return None
+
+    if _BRACKETED_TOKEN_RE.match(excerpt):
+        return None
+
+    if excerpt not in haystack:
+        return None
+
+    excerpt_lower = excerpt.lower()
+    for name in config.keep_names:
+        if not name:
+            continue
+        n = name.lower()
+        if n in excerpt_lower or excerpt_lower in n:
+            return None
+    for gpe in config.keep_gpes:
+        if not gpe:
+            continue
+        g = gpe.lower()
+        if g in excerpt_lower or excerpt_lower in g:
+            return None
+
+    severity = finding.severity
+    if finding.category in _HIGH_SEVERITY_CATEGORIES:
+        severity = "high"
+
+    if severity == finding.severity:
+        return finding
+    return Finding(
+        source=finding.source,
+        source_id=finding.source_id,
+        severity=severity,
+        category=finding.category,
+        excerpt=finding.excerpt,
+        reasoning=finding.reasoning,
+    )
 
 
 def _extract_message_content(response: Any) -> str:
