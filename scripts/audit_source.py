@@ -119,7 +119,21 @@ def main(argv: list[str] | None = None) -> int:
         print(f"audit failed: {exc}", file=sys.stderr)
         return 2
 
+    # Verifier drop breakdown — tells the user whether the low finding
+    # count is "LLM returned nothing" vs "verifier dropped a pile of
+    # hallucinations" vs "most findings matched the keep-list".
+    stats = getattr(audit_source, "last_stats", None)
     print(f"Wrote {total} finding(s) → {log_path}")
+    if stats is not None:
+        print(
+            f"Verifier stats: raw={stats.raw} kept={stats.kept} "
+            f"dropped[hallucinated={stats.hallucinated} "
+            f"keep_list={stats.keep_list} "
+            f"bracketed_token={stats.bracketed_token} "
+            f"empty_excerpt={stats.empty_excerpt}] "
+            f"severity_upgraded={stats.severity_upgraded}",
+            file=sys.stderr,
+        )
     return 0
 
 

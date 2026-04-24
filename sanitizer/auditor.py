@@ -58,6 +58,35 @@ class AuditConfig:
     keep_gpes: frozenset[str] = field(default_factory=frozenset)
 
 
+@dataclass
+class DropStats:
+    """Counters for verifier rejections — surfaced after an audit run so
+    the user can see how much the LLM over-generated vs. how much the
+    verifier filtered out. A healthy run has most raw findings surviving
+    verification; a run with ``hallucinated`` > ``kept`` means the model
+    is making things up.
+    """
+
+    raw: int = 0
+    kept: int = 0
+    empty_excerpt: int = 0
+    bracketed_token: int = 0
+    hallucinated: int = 0
+    keep_list: int = 0
+    severity_upgraded: int = 0
+
+    def as_dict(self) -> dict[str, int]:
+        return {
+            "raw": self.raw,
+            "kept": self.kept,
+            "empty_excerpt": self.empty_excerpt,
+            "bracketed_token": self.bracketed_token,
+            "hallucinated": self.hallucinated,
+            "keep_list": self.keep_list,
+            "severity_upgraded": self.severity_upgraded,
+        }
+
+
 class AuditorError(RuntimeError):
     """Raised when Ollama / the model is unavailable or misbehaves."""
 
@@ -292,10 +321,17 @@ def audit_record(
     text = _extract_message_content(response)
     haystack = _searchable_text(record)
     verified: list[Finding] = []
+    stats = DropStats()
     for raw in _parse_findings(text, record):
-        finding = _verify_finding(raw, haystack=haystack, config=config)
+        stats.raw += 1
+        finding = _verify_finding(raw, haystack=haystack, config=config, stats=stats)
         if finding is not None:
+            stats.kept += 1
             verified.append(finding)
+    # Stash stats on the function call for optional inspection (tests /
+    # the CLI). Not returned from this function to keep the public
+    # signature stable.
+    audit_record.last_stats = stats  # type: ignore[attr-defined]
     return verified
 
 
@@ -320,6 +356,7 @@ def _verify_finding(
     *,
     haystack: str,
     config: AuditConfig,
+    stats: DropStats | None = None,
 ) -> Finding | None:
     """Deterministic post-filter. Returns ``None`` to drop, else a (possibly
     severity-upgraded) ``Finding``.
@@ -329,31 +366,42 @@ def _verify_finding(
     2. Drop if ``excerpt`` is just one of our sanitizer tokens (``[FOO_N]``).
     3. Drop if ``excerpt`` is not a literal substring of ``haystack`` —
        catches hallucinated names and made-up context.
-    4. Drop if ``excerpt`` contains (or equals) a keep-list entry.
-    5. Upgrade severity to ``"high"`` for credential/financial categories.
+    4. Drop if ``excerpt`` contains (or equals) a keep-list entry
+       (word-boundary match, case-insensitive).
+    5. Upgrade severity to ``"high"`` for credential / financial categories.
     """
     excerpt = finding.excerpt.strip()
     if not excerpt:
+        if stats is not None:
+            stats.empty_excerpt += 1
         return None
 
     if _BRACKETED_TOKEN_RE.match(excerpt):
+        if stats is not None:
+            stats.bracketed_token += 1
         return None
 
     if excerpt not in haystack:
+        if stats is not None:
+            stats.hallucinated += 1
         return None
 
-    excerpt_lower = excerpt.lower()
+    # Keep-list checks use word-boundary matching so a keep-listed short
+    # name (e.g. "Lea") doesn't accidentally cancel a finding whose
+    # excerpt happens to contain the same letters inside another word
+    # (e.g. "Please"), and a keep-listed short name doesn't cancel a
+    # different name that happens to share a prefix. A compound
+    # full-name form like "<first-name> <surname>" still matches on the
+    # first token and is correctly dropped.
     for name in config.keep_names:
-        if not name:
-            continue
-        n = name.lower()
-        if n in excerpt_lower or excerpt_lower in n:
+        if _contains_whole_word(excerpt, name):
+            if stats is not None:
+                stats.keep_list += 1
             return None
     for gpe in config.keep_gpes:
-        if not gpe:
-            continue
-        g = gpe.lower()
-        if g in excerpt_lower or excerpt_lower in g:
+        if _contains_whole_word(excerpt, gpe):
+            if stats is not None:
+                stats.keep_list += 1
             return None
 
     severity = finding.severity
@@ -362,6 +410,8 @@ def _verify_finding(
 
     if severity == finding.severity:
         return finding
+    if stats is not None:
+        stats.severity_upgraded += 1
     return Finding(
         source=finding.source,
         source_id=finding.source_id,
@@ -424,6 +474,18 @@ def _parse_findings(text: str, record: dict[str, Any]) -> Iterator[Finding]:
 
 
 _JSON_OBJECT_RE = re.compile(r"\{.*\}", re.DOTALL)
+
+
+def _contains_whole_word(haystack: str, needle: str) -> bool:
+    """True if ``needle`` appears inside ``haystack`` at word boundaries.
+
+    Case-insensitive. ``re.escape`` on ``needle`` so names with
+    punctuation don't blow up the regex. Empty needle never matches.
+    """
+    if not needle.strip():
+        return False
+    pattern = re.compile(rf"\b{re.escape(needle)}\b", re.IGNORECASE)
+    return pattern.search(haystack) is not None
 
 
 def _extract_json_block(text: str) -> Any:
@@ -545,15 +607,27 @@ def audit_source(
 
     log_path.parent.mkdir(parents=True, exist_ok=True)
     total_findings = 0
+    aggregate = DropStats()
     with log_path.open("w") as fout:
         for i, record in enumerate(records, start=1):
             findings = audit_record(record, model_name=chosen_model, config=config, client=client)
+            per_record: DropStats = getattr(audit_record, "last_stats", DropStats())
+            aggregate.raw += per_record.raw
+            aggregate.kept += per_record.kept
+            aggregate.empty_excerpt += per_record.empty_excerpt
+            aggregate.bracketed_token += per_record.bracketed_token
+            aggregate.hallucinated += per_record.hallucinated
+            aggregate.keep_list += per_record.keep_list
+            aggregate.severity_upgraded += per_record.severity_upgraded
             for finding in findings:
                 fout.write(json.dumps(asdict(finding)) + "\n")
                 total_findings += 1
             fout.flush()
             if progress_callback is not None:
                 progress_callback(i, len(records), total_findings)
+    # Expose aggregate stats for the CLI to print (not returned from the
+    # function so the public signature stays stable).
+    audit_source.last_stats = aggregate  # type: ignore[attr-defined]
     return total_findings
 
 

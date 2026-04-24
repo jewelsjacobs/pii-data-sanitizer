@@ -308,6 +308,57 @@ def test_verifier_preserves_legitimate_high_severity_finding() -> None:
     assert finding.severity == "high"
 
 
+def test_verifier_keep_list_uses_word_boundaries_not_substring() -> None:
+    """Keep-listed 'Lea' must not silently drop a finding whose excerpt
+    happens to contain the letters 'lea' inside another word (e.g.
+    'Please'). Previously the substring check had this bug."""
+    client = _fake_client(
+        _finding_response(
+            {
+                "severity": "medium",
+                "category": "name",
+                "excerpt": "Please",  # contains 'lea' as a substring, not a word
+                "reasoning": "seen as name (hypothetical)",
+            }
+        )
+    )
+    record = {
+        "source": "apple-mail",
+        "source_id": "1",
+        "content": "Please review the attached file.",
+        "metadata": {},
+    }
+    config = AuditConfig(keep_names=frozenset({"Lea"}))
+    findings = audit_record(record, client=client, model_name="m", config=config)
+    assert len(findings) == 1
+    assert findings[0].excerpt == "Please"
+
+
+def test_verifier_keep_list_does_not_drop_different_name_with_shared_prefix() -> None:
+    """Keep-listed 'Lea' does not cancel a finding of 'Leander' — they
+    are different names, not compound forms of the keep-listed one."""
+    client = _fake_client(
+        _finding_response(
+            {
+                "severity": "medium",
+                "category": "name",
+                "excerpt": "Leander",
+                "reasoning": "proper name",
+            }
+        )
+    )
+    record = {
+        "source": "apple-mail",
+        "source_id": "1",
+        "content": "Hi Leander, thanks for the heads up.",
+        "metadata": {},
+    }
+    config = AuditConfig(keep_names=frozenset({"Lea"}))
+    findings = audit_record(record, client=client, model_name="m", config=config)
+    assert len(findings) == 1
+    assert findings[0].excerpt == "Leander"
+
+
 def test_verifier_checks_metadata_not_just_content() -> None:
     """Excerpt found only in a metadata field still counts as present."""
     client = _fake_client(
