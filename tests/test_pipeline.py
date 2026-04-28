@@ -91,6 +91,24 @@ def test_structural_metadata_is_preserved() -> None:
     assert out["metadata"]["attachment_count"] == 0
 
 
+def test_phone_with_multi_char_separators() -> None:
+    """Audit caught (NNN)-NNN- NNNN format (extra hyphen + space) leaking
+    through. The phone regex must allow runs of separators between groups."""
+    rec = _record("Call (732)-930- 0987 to confirm your appointment.")
+    out = sanitize(rec)
+    assert "(732)" not in out["content"]
+    assert "0987" not in out["content"]
+    assert "[PHONE_" in out["content"]
+
+
+def test_phone_dotted_then_spaced_format() -> None:
+    """'732.930. 0987' (dot + dot-space) — multi-char separators."""
+    rec = _record("Reach me at 732.930. 0987 anytime.")
+    out = sanitize(rec)
+    assert "0987" not in out["content"]
+    assert "[PHONE_" in out["content"]
+
+
 def test_input_is_not_mutated() -> None:
     """sanitize returns a new record; the caller's dict is untouched."""
     rec = _record("Email linda@example.invalid.")

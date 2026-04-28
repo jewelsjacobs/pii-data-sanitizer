@@ -103,3 +103,65 @@ def test_non_url_brackets_left_alone() -> None:
     """`[n]` without `(url)` next to it is not a markdown link."""
     text = "Footnote [1] in the paper; array index arr[2]."
     assert apply_rules(text) == text
+
+
+# ---------------------------------------------------------------------------
+# Rule fixes from the M6 first audit pass
+# ---------------------------------------------------------------------------
+
+
+def test_ssn_last_four_labeled() -> None:
+    """'last 4 of SSN: 1234' shapes get [REDACTED_SSN]."""
+    out = apply_rules("Please confirm: last 4 of SSN: 1234.")
+    assert "[REDACTED_SSN]" in out
+    assert "1234" not in out
+
+
+def test_ssn_ending_in_labeled() -> None:
+    out = apply_rules("Verify SSN ending in 5678 to continue.")
+    assert "[REDACTED_SSN]" in out
+    assert "5678" not in out
+
+
+def test_account_ending_in_labeled() -> None:
+    """'account ending in 5083' → [REDACTED_ACCOUNT]."""
+    out = apply_rules("Charged to account ending in 5083 today.")
+    assert "[REDACTED_ACCOUNT]" in out
+    assert "5083" not in out
+
+
+def test_bare_ending_in_labeled() -> None:
+    """'ending with 9012' alone (no 'account' prefix) is also caught."""
+    out = apply_rules("Card ending with 9012 on file.")
+    assert "[REDACTED_ACCOUNT]" in out
+
+
+def test_dshs_client_id_labeled() -> None:
+    """State client IDs like DSHS are high-priority gov IDs."""
+    out = apply_rules("DSHS Client ID: 1234567890")
+    assert "[REDACTED_GOV_ID]" in out
+    assert "1234567890" not in out
+
+
+def test_medicare_member_id_labeled() -> None:
+    out = apply_rules("Medicare ID: ABC123456789")
+    assert "[REDACTED_GOV_ID]" in out
+    assert "ABC123456789" not in out
+
+
+def test_2fa_verification_code_labeled() -> None:
+    out = apply_rules("Your verification code is 482917.")
+    assert "[REDACTED_2FA]" in out
+    assert "482917" not in out
+
+
+def test_2fa_one_time_passcode() -> None:
+    out = apply_rules("One-time passcode: 5293")
+    assert "[REDACTED_2FA]" in out
+    assert "5293" not in out
+
+
+def test_2fa_otp_label() -> None:
+    out = apply_rules("OTP: 824673")
+    assert "[REDACTED_2FA]" in out
+    assert "824673" not in out

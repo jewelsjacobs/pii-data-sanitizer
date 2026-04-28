@@ -48,12 +48,14 @@ _STRUCTURAL_KEEP_KEYS = frozenset(
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
 # Common US/international phone shapes: paren'd area code, dotted, dashed,
-# spaced, E.164, and bare 10-digit.
+# spaced, E.164, and bare 10-digit. Separator class allows multiple chars
+# between groups so audit-found shapes like ``(732)-930- 0987`` (extra
+# hyphen plus space) match — the previous single-char allowance missed them.
 _PHONE_RE = re.compile(
     r"(?<!\d)"
-    r"(?:\+\d{1,3}[-. ]?)?"
-    r"(?:\(\d{3}\)[-. ]?|\d{3}[-. ])"
-    r"\d{3}[-. ]?\d{4}"
+    r"(?:\+\d{1,3}[-. ]*)?"
+    r"(?:\(\d{3}\)[-. ]*|\d{3}[-. ]+)"
+    r"\d{3}[-. ]*\d{4}"
     r"(?!\d)"
     r"|(?<!\d)\+?\d{10,15}(?!\d)"
 )

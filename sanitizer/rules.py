@@ -106,11 +106,33 @@ RULES: list[Rule] = [
         ),
         replacement=r"\g<label>\g<sep>[REDACTED_RECOVERY_CODE]",
     ),
+    # 2FA / verification / one-time codes. Must run BEFORE labeled_password
+    # so that "one-time passcode" matches the longer label here instead of
+    # the bare "passcode" inside labeled_password (which would mis-redact
+    # as a generic credential rather than a 2FA code).
+    Rule(
+        name="labeled_2fa_code",
+        pattern=re.compile(
+            r"(?im)(?P<label>(?:verification|authentication|2FA|MFA|security|"
+            r"login|sign-?in|sign-?up|access)\s+code"
+            r"|your\s+(?:verification\s+)?code(?:\s+is)?"
+            r"|one-?time\s+(?:passcode|code|password|pin)"
+            r"|OTP)"
+            r"(?P<sep>\s*[:#=]?\s*[\"']?)"
+            r"(?P<value>\d{4,8})\b"
+        ),
+        replacement=r"\g<label>\g<sep>[REDACTED_2FA]",
+    ),
     Rule(
         name="labeled_password",
+        # Negative lookahead `(?!\[)` skips values that are already a
+        # sanitizer token — otherwise a "one-time passcode: [REDACTED_2FA]"
+        # form (matched first by labeled_2fa_code) would be re-redacted
+        # here as [REDACTED_CREDENTIAL].
         pattern=re.compile(
             r"(?im)(?P<label>\b(?:password|passphrase|pw|pwd|passcode))"
-            r"(?P<sep>\s*[:=]\s*)" + _VALUE
+            r"(?P<sep>\s*[:=]\s*)"
+            r"(?!\[)" + _VALUE
         ),
         replacement=r"\g<label>\g<sep>[REDACTED_CREDENTIAL]",
     ),
@@ -178,6 +200,44 @@ RULES: list[Rule] = [
             r"(?P<value>[A-Z]?\d{6,})\b"
         ),
         replacement=r"\g<label>\g<sep>[REDACTED_BROKERAGE]",
+    ),
+    # SSN last-4 patterns: "last 4 of SSN: NNNN", "SSN ending in NNNN".
+    # Audit caught these slipping through because the bare-SSN rule
+    # requires the full XXX-XX-NNNN shape.
+    Rule(
+        name="ssn_last_four",
+        pattern=re.compile(
+            r"(?im)(?P<label>(?:last\s+(?:4|four)\s+(?:of|digits?\s+of)?\s*SSN"
+            r"|SSN(?:'s)?\s+(?:last\s+(?:4|four)|ending(?:\s+in)?)))"
+            r"(?P<sep>\s*[:#=]?\s*)"
+            r"(?P<value>\d{4})\b"
+        ),
+        replacement=r"\g<label>\g<sep>[REDACTED_SSN]",
+    ),
+    # Account-ending patterns: "account ending in NNNN", "ending in NNNN".
+    # Common in bank / credit-card receipts.
+    Rule(
+        name="account_ending",
+        pattern=re.compile(
+            r"(?im)(?P<label>(?:account(?:\s+(?:number|#))?\s+)?ending(?:\s+(?:in|with))?)"
+            r"(?P<sep>\s*[:#=]?\s*)"
+            r"(?P<value>\d{4})\b"
+        ),
+        replacement=r"\g<label>\g<sep>[REDACTED_ACCOUNT]",
+    ),
+    # Government / state-program / health-insurance IDs. State client IDs
+    # (DSHS, EBT, SNAP) and health IDs (Medicare, Medicaid, member /
+    # subscriber numbers) are high-severity per the audit and have no
+    # uniform shape — match the labeled form only.
+    Rule(
+        name="labeled_gov_id",
+        pattern=re.compile(
+            r"(?im)(?P<label>\b(?:DSHS|EBT|SNAP|TANF|Medicaid|Medicare|"
+            r"Member|Patient|Policy|Case|Client|Subscriber|Plan)\s+(?:ID|number|#|no\.?))"
+            r"(?P<sep>\s*[:#=]?\s*)"
+            r"(?P<value>[A-Z]?\d{6,}|[A-Z0-9-]{8,})\b"
+        ),
+        replacement=r"\g<label>\g<sep>[REDACTED_GOV_ID]",
     ),
     # --- URLs + IPs ----------------------------------------------------------
     # --- addresses -----------------------------------------------------------
