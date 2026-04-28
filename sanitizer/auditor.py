@@ -204,8 +204,40 @@ SYSTEM_PROMPT = "\n".join(
 _HIGH_SEVERITY_CATEGORIES = frozenset({"credential"})
 
 # Regex for a bare sanitizer token — used to drop findings that "flag"
-# the very token the sanitizer produced.
-_BRACKETED_TOKEN_RE = re.compile(r"^\s*\[[A-Z_]+(?:_\d+)?\]\s*$")
+# the very token the sanitizer produced. Matches both fully-bracketed
+# (`[PERSON_42]`) and the common LLM mistake of stripping the brackets
+# but keeping the inner shape (`PERSON_42`). Only the known token
+# stems are matched so generic acronyms like `USA` or `API` aren't
+# accidentally treated as tokens.
+_KNOWN_TOKEN_STEMS = (
+    "PERSON",
+    "EMAIL",
+    "PHONE",
+    "ADDRESS",
+    "LOCATION",
+    "ORG",
+    "ENTITY",
+    "FAMILY_PARENT",
+    "FAMILY_SIBLING",
+    "FRIEND",
+    "PARTNER",
+    "PROVIDER",
+    "COLLEAGUE",
+    "CLIENT",
+    "SCHOOL",
+    "EMPLOYER",
+    "FREQUENT_LOCATION",
+    "HOME_ADDRESS",
+    "MY_EMAIL",
+    "MY_PHONE",
+    "ATTACHMENT_SKIPPED",
+    "DATE_REDACTED",
+    "IMAGE_REDACTED",
+    "MEDICAL_INFO_REDACTED",
+)
+_BRACKETED_TOKEN_RE = re.compile(
+    r"^\s*\[?(?:" + "|".join(_KNOWN_TOKEN_STEMS) + r"|REDACTED_[A-Z_]+)" + r"(?:_\d+)?\]?\s*$"
+)
 
 
 def _keep_list_prompt(config: AuditConfig) -> str:

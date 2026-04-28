@@ -262,6 +262,52 @@ def test_verifier_drops_bracketed_token_excerpt() -> None:
     assert audit_record(record, client=client, model_name="m") == []
 
 
+def test_verifier_drops_unbracketed_sanitizer_token_excerpt() -> None:
+    """LLM strips the brackets and flags the inner shape (PERSON_2379) —
+    that's still a sanitizer token, not real PII. Must be dropped."""
+    client = _fake_client(
+        _finding_response(
+            {
+                "severity": "medium",
+                "category": "name",
+                "excerpt": "PERSON_2379",
+                "reasoning": "looks like a redaction placeholder",
+            }
+        )
+    )
+    record = {
+        "source": "apple-mail",
+        "source_id": "1",
+        "content": "Hi [PERSON_2379], what's up? Also PERSON_2379.",
+        "metadata": {},
+    }
+    assert audit_record(record, client=client, model_name="m") == []
+
+
+def test_verifier_does_not_drop_legitimate_acronyms() -> None:
+    """The unbracketed-token check must not match generic acronyms like
+    USA, API, NASA — those could be legitimate findings of an
+    organization name leak."""
+    client = _fake_client(
+        _finding_response(
+            {
+                "severity": "low",
+                "category": "other",
+                "excerpt": "USA",
+                "reasoning": "country code",
+            }
+        )
+    )
+    record = {
+        "source": "apple-mail",
+        "source_id": "1",
+        "content": "Shipping address is in the USA.",
+        "metadata": {},
+    }
+    [finding] = audit_record(record, client=client, model_name="m")
+    assert finding.excerpt == "USA"
+
+
 def test_verifier_forces_high_severity_for_credential_category() -> None:
     """Model returned credential at 'medium'; verifier must upgrade to 'high'."""
     client = _fake_client(
