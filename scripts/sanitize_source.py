@@ -60,6 +60,16 @@ def main(argv: list[str] | None = None) -> int:
         flush=True,
     )
 
+    # entity_counts / new_assignments track ONLY new pseudonyms assigned
+    # to the mapping this run — i.e. mapping growth. Cache-hit
+    # pseudonyms (entities already in the warm mapping) and hard-redact
+    # rule matches (REDACTED_GOV_ID, REDACTED_2FA, REDACTED_CARD, etc.)
+    # are NOT counted here. On a re-run with a warm mapping the count
+    # is naturally zero — that's correct, not a bug.
+    #
+    # Surfacing total redactions per record would require either
+    # plumbing through the pipeline or a post-hoc token-count scan;
+    # tracked as future work.
     entity_counts: Counter[str] = Counter()
     records_in = 0
     records_out = 0
@@ -94,7 +104,8 @@ def main(argv: list[str] | None = None) -> int:
                 pct = (records_out / total * 100) if total else 0.0
                 print(
                     f"  {records_out}/{total} ({pct:.1f}%) — "
-                    f"{sum(entity_counts.values())} entities pseudonymized",
+                    f"{sum(entity_counts.values())} new pseudonyms assigned "
+                    f"(mapping growth; warm-mapping reruns can stay at 0)",
                     file=sys.stderr,
                     flush=True,
                 )
