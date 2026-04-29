@@ -143,6 +143,22 @@ def test_dshs_client_id_labeled() -> None:
     assert "1234567890" not in out
 
 
+def test_dshs_client_id_with_parenthetical_qualifier() -> None:
+    """Real audit case: 'DSHS Client ID (if you have one): NNNNNNNNNN'.
+    Earlier rule didn't allow the parenthetical or the multi-word label."""
+    out = apply_rules("DSHS Client ID (if you have one): 1234567890")
+    assert "[REDACTED_GOV_ID]" in out
+    assert "1234567890" not in out
+
+
+def test_medicare_member_number_two_role_words() -> None:
+    """'Medicare Member Number' has two role words (Medicare + Member)
+    plus 'Number'. Should still match."""
+    out = apply_rules("Medicare Member Number: A1B2C3D4E5")
+    assert "[REDACTED_GOV_ID]" in out
+    assert "A1B2C3D4E5" not in out
+
+
 def test_medicare_member_id_labeled() -> None:
     out = apply_rules("Medicare ID: ABC123456789")
     assert "[REDACTED_GOV_ID]" in out

@@ -229,12 +229,24 @@ RULES: list[Rule] = [
     # (DSHS, EBT, SNAP) and health IDs (Medicare, Medicaid, member /
     # subscriber numbers) are high-severity per the audit and have no
     # uniform shape — match the labeled form only.
+    #
+    # Label structure: <agency-or-role-word> (optional second-role-word) +
+    # ID/Number/#. Catches "DSHS ID", "Client ID", "DSHS Client ID",
+    # "Medicare Member Number", etc.
+    #
+    # Separator allows an optional parenthetical between the label and
+    # the colon — e.g. "DSHS Client ID (if you have one): NNNN" was the
+    # exact shape that slipped through the first iteration.
     Rule(
         name="labeled_gov_id",
         pattern=re.compile(
-            r"(?im)(?P<label>\b(?:DSHS|EBT|SNAP|TANF|Medicaid|Medicare|"
-            r"Member|Patient|Policy|Case|Client|Subscriber|Plan)\s+(?:ID|number|#|no\.?))"
-            r"(?P<sep>\s*[:#=]?\s*)"
+            r"(?im)(?P<label>"
+            r"\b(?:DSHS|EBT|SNAP|TANF|Medicaid|Medicare|Insurance|Health|"
+            r"Member|Patient|Policy|Case|Client|Subscriber|Plan)"
+            r"(?:\s+(?:Client|Case|Member|Patient|Subscriber|Account|Group|Plan|Policy))?"
+            r"\s+(?:ID|Number|#|No\.?)"
+            r")"
+            r"(?P<sep>\s*(?:\([^)]*\))?\s*[:#=]?\s*)"
             r"(?P<value>[A-Z]?\d{6,}|[A-Z0-9-]{8,})\b"
         ),
         replacement=r"\g<label>\g<sep>[REDACTED_GOV_ID]",
