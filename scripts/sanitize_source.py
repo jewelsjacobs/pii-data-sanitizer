@@ -18,6 +18,7 @@ from sanitizer.manifest import write_manifest
 from sanitizer.mapping import Mapping
 from sanitizer.pipeline import KeepList, SelfIdentity, sanitize
 from scripts._config import LocalConfig, load_config
+from scripts._filter import is_in_window, validate_since
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -27,6 +28,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--config", type=Path, default=Path("config/local.json"), help="Local config path."
+    )
+    parser.add_argument(
+        "--since",
+        type=validate_since,
+        default=None,
+        help=(
+            "Only sanitize records whose timestamp is on or after this YYYY-MM-DD. "
+            "When set, the existing clean file is preserved and new records are "
+            "appended (deduped by source_id) so prior runs aren't overwritten."
+        ),
     )
     args = parser.parse_args(argv)
 
@@ -48,14 +59,41 @@ def main(argv: list[str] | None = None) -> int:
     clean_dir.mkdir(parents=True, exist_ok=True)
     clean_file = clean_dir / "events.jsonl"
 
+    # In --since mode, preserve already-sanitized records and skip any
+    # raw record whose source_id is already in the clean file. Without
+    # --since, the clean file is rewritten from scratch as before.
+    incremental = args.since is not None
+    existing_ids: set[str] = set()
+    if incremental and clean_file.exists():
+        with clean_file.open() as fexisting:
+            for line in fexisting:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                sid = rec.get("source_id")
+                if isinstance(sid, str):
+                    existing_ids.add(sid)
+
     # Count raw records up front so the progress line can show N/total.
     # One line per record, so wc-l is correct. Extra cost is trivial
     # compared to the NER run that follows.
     total = sum(1 for line in raw_file.open() if line.strip())
+    window_label = f"window: --since {args.since}" if args.since else "window: full"
+    mode_label = (
+        f"mode: append+dedupe ({len(existing_ids)} existing records preserved)"
+        if incremental
+        else "mode: overwrite"
+    )
     print(
         f"Sanitizing {total} {args.source} record(s) from {raw_file}\n"
         f"   → {clean_file}\n"
-        f"   mapping: {cfg.mapping_path}",
+        f"   mapping: {cfg.mapping_path}\n"
+        f"   {window_label}\n"
+        f"   {mode_label}",
         file=sys.stderr,
         flush=True,
     )
@@ -73,20 +111,32 @@ def main(argv: list[str] | None = None) -> int:
     entity_counts: Counter[str] = Counter()
     records_in = 0
     records_out = 0
+    skipped_window = 0
+    skipped_dedupe = 0
     new_assignments = 0
     # Save the mapping every this-many records so a crashed run doesn't
     # lose any new pseudonyms already assigned.
     _mapping_save_interval = 500
     cfg.mapping_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with raw_file.open() as fin, clean_file.open("w") as fout:
+    open_mode = "a" if incremental else "w"
+
+    with raw_file.open() as fin, clean_file.open(open_mode) as fout:
         for line in fin:
             if not line.strip():
                 continue
             records_in += 1
+            raw_record = json.loads(line)
+            if not is_in_window(raw_record, args.since):
+                skipped_window += 1
+                continue
+            sid = raw_record.get("source_id")
+            if incremental and isinstance(sid, str) and sid in existing_ids:
+                skipped_dedupe += 1
+                continue
             before = _mapping_sizes(mapping)
             sanitized = sanitize(
-                json.loads(line),
+                raw_record,
                 mapping=mapping,
                 self_identity=identity,
                 keep=keep,
@@ -122,9 +172,14 @@ def main(argv: list[str] | None = None) -> int:
         mapping_file_path=cfg.mapping_path,
     )
 
-    print(
-        f"Sanitized {records_out}/{records_in} record(s) → {clean_file}\nManifest: {manifest_path}"
-    )
+    summary_parts = [f"Sanitized {records_out}/{records_in} record(s) → {clean_file}"]
+    if skipped_window or skipped_dedupe:
+        summary_parts.append(
+            f"  skipped: {skipped_window} outside --since window, "
+            f"{skipped_dedupe} already in clean file (dedup)"
+        )
+    summary_parts.append(f"Manifest: {manifest_path}")
+    print("\n".join(summary_parts))
     return 0
 
 

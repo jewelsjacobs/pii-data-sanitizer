@@ -19,12 +19,15 @@ The auditor is local-only (Ollama). The user is responsible for:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
 from sanitizer.auditor import DEFAULT_MODEL, AuditConfig, AuditorError, audit_source
 from scripts._config import LocalConfig, load_config
+from scripts._filter import is_in_window, validate_since
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -65,6 +68,16 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Root of audit logs. Defaults to logs/audit/<run-id>/.",
     )
+    parser.add_argument(
+        "--since",
+        type=validate_since,
+        default=None,
+        help=(
+            "Only audit records whose timestamp is on or after this YYYY-MM-DD. "
+            "The clean file is read into a temp file containing just the windowed "
+            "subset; the original is untouched."
+        ),
+    )
     args = parser.parse_args(argv)
 
     cfg: LocalConfig = load_config(args.config)
@@ -75,6 +88,37 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
+
+    # When --since is set, write a temp JSONL containing only records in
+    # the window and audit that. Saves us touching the auditor's API.
+    audit_input_path = events_path
+    temp_handle: tempfile._TemporaryFileWrapper[str] | None = None
+    in_window = 0
+    if args.since is not None:
+        temp_handle = tempfile.NamedTemporaryFile(  # noqa: SIM115 — closed in finally below
+            mode="w",
+            suffix=".jsonl",
+            delete=False,
+        )
+        with events_path.open() as fin:
+            for line in fin:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if is_in_window(rec, args.since):
+                    temp_handle.write(json.dumps(rec) + "\n")
+                    in_window += 1
+        temp_handle.close()
+        audit_input_path = Path(temp_handle.name)
+        print(
+            f"--since {args.since}: {in_window} record(s) in window → {audit_input_path}",
+            file=sys.stderr,
+            flush=True,
+        )
 
     run_id = datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%S")
     log_dir = args.log_dir if args.log_dir else Path("logs") / "audit" / run_id
@@ -97,17 +141,18 @@ def main(argv: list[str] | None = None) -> int:
             )
 
     print(
-        f"Auditing {args.source}: {events_path}\n"
+        f"Auditing {args.source}: {audit_input_path}\n"
         f"   → {log_path}\n"
         f"   model: {args.model or 'default (resolve at runtime)'}\n"
-        f"   sample: {sample if sample else 'all'}",
+        f"   sample: {sample if sample else 'all'}\n"
+        f"   window: {args.since if args.since else 'full'}",
         file=sys.stderr,
         flush=True,
     )
 
     try:
         total = audit_source(
-            events_path,
+            audit_input_path,
             log_path,
             model_name=args.model,
             config=config,
@@ -118,6 +163,12 @@ def main(argv: list[str] | None = None) -> int:
     except AuditorError as exc:
         print(f"audit failed: {exc}", file=sys.stderr)
         return 2
+    finally:
+        if temp_handle is not None:
+            try:
+                Path(temp_handle.name).unlink(missing_ok=True)
+            except OSError:
+                pass
 
     # Verifier drop breakdown — tells the user whether the low finding
     # count is "LLM returned nothing" vs "verifier dropped a pile of
