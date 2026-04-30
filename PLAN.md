@@ -172,7 +172,21 @@ The filesystem-level gate between raw and clean staging.
 
 ## Where we are
 
-Current milestone: **M6.5 complete.** Next up: **M7 — Account split.**
+Current milestone: **M7 in progress** (code + runbook landed; user-side
+ACL application is the remaining step). Next up: **post-M7 hardening
+(deferred local-files end-to-end run + ongoing rule iteration).**
+
+M7 notes: `docs/account-split.md` documents the full
+juliajacobs↔openclaw boundary on macOS — ACL chain on home →
+projects → pii-data-sanitizer to grant openclaw read on
+`clean-staging/` only, `chmod -R go-rwx` on `raw-staging/` and
+`mapping/`, sudoers entry for password-free `sudo -u openclaw`.
+The `openclaw` Standard (non-admin) account is already created on
+this machine. `scripts/verify_account_split.py` probes every
+sensitive and accessible path and reports per-path
+PASS/FAIL against a profile (`--profile user|agent`); exits 0 iff
+all probes match. Makefile targets: `make verify-split-user` and
+`make verify-split-agent`. 12 new tests, 243 total passing.
 
 M6 notes: real-run iteration cycles produced clean output for ical,
 apple-mail, and imessage (local-files deferred per user request).

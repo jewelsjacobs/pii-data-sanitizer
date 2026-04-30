@@ -1,4 +1,4 @@
-.PHONY: install test lint format extract extract-ical extract-local-files extract-apple-mail extract-imessage sanitize sanitize-ical sanitize-local-files sanitize-apple-mail sanitize-imessage audit audit-ical audit-local-files audit-apple-mail audit-imessage promote promote-ical promote-local-files promote-apple-mail promote-imessage state
+.PHONY: install test lint format extract extract-ical extract-local-files extract-apple-mail extract-imessage sanitize sanitize-ical sanitize-local-files sanitize-apple-mail sanitize-imessage audit audit-ical audit-local-files audit-apple-mail audit-imessage promote promote-ical promote-local-files promote-apple-mail promote-imessage state verify-split verify-split-user verify-split-agent
 
 # Pass extra flags through to the underlying scripts, e.g.
 #   make sanitize-apple-mail ARGS="--since 2026-03-30"
@@ -79,3 +79,15 @@ promote-imessage:
 
 state:
 	uv run python -m scripts.show_state $(ARGS)
+
+# Defaults to the user profile (run from your normal account).
+# Use `make verify-split-agent` (which adds --profile agent) when running
+# under sudo -u openclaw, e.g.
+#   sudo -u openclaw -i bash -lc 'cd ~<your-user>/projects/pii-data-sanitizer && make verify-split-agent'
+verify-split: verify-split-user
+
+verify-split-user:
+	uv run python -m scripts.verify_account_split --profile user $(ARGS)
+
+verify-split-agent:
+	uv run python -m scripts.verify_account_split --profile agent $(ARGS)
