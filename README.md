@@ -47,3 +47,11 @@ Ground-truth fixtures under `tests/fixtures/ground-truth/` are **intentionally l
 | `make extract`  | Run every source adapter (ical, local-files, apple-mail, imessage).  |
 | `make sanitize` | Run the sanitizer over each source's `/raw-staging` output.          |
 | `make audit`    | Run the Ollama-backed LLM auditor over `/clean-staging` and write findings to `logs/audit/`. |
+| `make promote`  | Render sanitized records as Obsidian-shaped markdown notes into the configured staging folder (outside the vault — review and move manually). |
+
+Per-source variants exist for every step (`make extract-apple-mail`, `make sanitize-ical`, …).
+Pass extra flags through `ARGS`, e.g. `make sanitize-apple-mail ARGS="--since 2026-03-30"`.
+
+## Refreshing the data
+
+The sanitize / audit / promote steps accept `--since YYYY-MM-DD` so you can re-run the pipeline against only recent records without reprocessing the full archive. With `--since`, sanitize switches to **append + dedupe-by-`source_id`** mode so prior clean output is preserved; audit and promote filter their inputs to the window. The full step-by-step (per-source quirks, file-level cheat sheet, recovery notes, suggested cadence) lives in `files/refresh-runbook.md` (local-only).
