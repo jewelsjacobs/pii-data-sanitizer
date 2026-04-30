@@ -196,10 +196,12 @@ clean-staging readable, mapping readable, vault readable).
 **As `openclaw`:**
 
 ```sh
-sudo -u openclaw -i bash -lc \
-  'cd ~<user>/projects/pii-data-sanitizer && \
-   uv run python -m scripts.verify_account_split --profile agent --user-home ~<user>'
+sudo -u openclaw -i bash -lc 'cd ~<user>/projects/pii-data-sanitizer && uv run python -m scripts.verify_account_split --profile agent --user-home ~<user>'
 ```
+
+Keep this on a single line. Splitting it across lines with `\`
+continuations gets mangled by some shells when pasted (zsh in
+particular) and you'll see `bash: : command not found`.
 
 `--user-home ~<user>` is important. Without it, `Path.home()` resolves
 to `/Users/openclaw`, and the script ends up probing openclaw's *own*
