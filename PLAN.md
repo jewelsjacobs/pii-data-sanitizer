@@ -172,9 +172,12 @@ The filesystem-level gate between raw and clean staging.
 
 ## Where we are
 
-Current milestone: **M7 in progress** (code + runbook landed; user-side
-ACL application is the remaining step). Next up: **post-M7 hardening
-(deferred local-files end-to-end run + ongoing rule iteration).**
+Current milestone: **M7 complete.** Both verification profiles pass on
+the real machine: user profile reads everything, agent profile is
+denied on raw-staging, mapping, config, .env, ~/Library/Mail,
+~/Library/Messages, and reads clean-staging + vault. Next up:
+**post-M7 hardening (deferred local-files end-to-end run + ongoing
+rule iteration as the agent crew exercises the pipeline).**
 
 M7 notes: `docs/account-split.md` documents the full
 juliajacobs↔openclaw boundary on macOS — ACL chain on home →
