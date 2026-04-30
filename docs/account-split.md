@@ -196,12 +196,22 @@ clean-staging readable, mapping readable, vault readable).
 **As `openclaw`:**
 
 ```sh
-sudo -u openclaw -i bash -lc 'cd ~<user>/projects/pii-data-sanitizer && uv run python -m scripts.verify_account_split --profile agent'
+sudo -u openclaw -i bash -lc \
+  'cd ~<user>/projects/pii-data-sanitizer && \
+   uv run python -m scripts.verify_account_split --profile agent --user-home ~<user>'
 ```
 
+`--user-home ~<user>` is important. Without it, `Path.home()` resolves
+to `/Users/openclaw`, and the script ends up probing openclaw's *own*
+empty mailbox instead of the user's mailbox under
+`/Users/<user>/Library/Mail/`. The script auto-detects the right home
+when cwd is under `/Users/<user>/...`, but passing it explicitly is
+the safe move.
+
 Expected: every "agent" probe passes (raw-staging **denied**,
-clean-staging readable, mapping **denied**, ~/Library/Mail **denied**,
-~/Library/Messages **denied**, vault readable).
+clean-staging readable, mapping **denied**,
+`/Users/<user>/Library/Mail` **denied**,
+`/Users/<user>/Library/Messages` **denied**, vault readable).
 
 If any agent probe shows the wrong result, **stop**. Don't run the
 agents until the boundary is right. The verification script's output

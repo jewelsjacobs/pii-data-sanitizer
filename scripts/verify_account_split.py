@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import pwd
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -85,19 +86,28 @@ def is_readable(path: Path) -> bool:
     return False
 
 
-def build_probes(profile: str, cfg: LocalConfig) -> list[Probe]:
-    """Build the probe list for ``profile`` (``"user"`` or ``"agent"``)."""
-    home = Path.home()
+def build_probes(profile: str, cfg: LocalConfig, *, user_home: Path) -> list[Probe]:
+    """Build the probe list for ``profile`` (``"user"`` or ``"agent"``).
 
+    ``user_home`` is the **human user's** home directory (the macOS
+    account that runs extract / sanitize / audit / promote).
+    Library/Mail and Library/Messages live there and must be probed at
+    that exact path — using ``Path.home()`` would silently rewrite the
+    probe to the *agent's* own mailbox under the agent profile, which
+    is irrelevant to the boundary check.
+    """
     sensitive = [
         (cfg.raw_staging_dir, "raw-staging/"),
         (cfg.mapping_path.parent, "mapping/"),
         (cfg.mapping_path, "mapping/mapping.json"),
         (Path("config/local.json"), "config/local.json"),
         (Path(".env"), ".env"),
-        (home / "Library" / "Mail", "~/Library/Mail/"),
-        (home / "Library" / "Messages", "~/Library/Messages/"),
-        (home / "Library" / "Messages" / "chat.db", "~/Library/Messages/chat.db"),
+        (user_home / "Library" / "Mail", f"{user_home}/Library/Mail/"),
+        (user_home / "Library" / "Messages", f"{user_home}/Library/Messages/"),
+        (
+            user_home / "Library" / "Messages" / "chat.db",
+            f"{user_home}/Library/Messages/chat.db",
+        ),
     ]
 
     accessible = [
@@ -167,19 +177,62 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--config", type=Path, default=Path("config/local.json"), help="Local config path."
     )
+    parser.add_argument(
+        "--user-home",
+        type=Path,
+        default=None,
+        help=(
+            "Path to the human user's home directory (the account that runs "
+            "extract/sanitize). Required when running the agent profile under "
+            "sudo -u openclaw, since Path.home() then refers to the agent. "
+            "When omitted, auto-detected from the current working directory if "
+            "it lives under /Users/<name>/..., otherwise falls back to "
+            "Path.home()."
+        ),
+    )
     args = parser.parse_args(argv)
 
     cfg, config_note = _load_config_or_default(args.config)
-    probes = build_probes(args.profile, cfg)
+    user_home = _resolve_user_home(args.user_home)
+    probes = build_probes(args.profile, cfg, user_home=user_home)
     results = run_probes(probes)
 
-    try:
-        who = os.getlogin()
-    except OSError:
-        who = os.environ.get("USER", "?")
-
-    print(render_report(args.profile, who, results, config_note=config_note))
+    print(render_report(args.profile, _whoami(), results, config_note=config_note))
     return 0 if all(r.passed for r in results) else 1
+
+
+def _resolve_user_home(arg_user_home: Path | None) -> Path:
+    """Pick the human user's home directory.
+
+    Priority order:
+    1. ``--user-home`` if explicitly passed.
+    2. cwd if it sits under ``/Users/<name>/...`` — covers the
+       common case of running the script from inside the project tree.
+    3. ``Path.home()`` of the caller, which is correct for the user
+       profile and wrong for the agent profile (caller flagged via
+       the auto-detection path above to dodge that case).
+    """
+    if arg_user_home is not None:
+        return arg_user_home.expanduser().resolve()
+    cwd_parts = Path.cwd().resolve().parts
+    if len(cwd_parts) >= 3 and cwd_parts[0] == "/" and cwd_parts[1] == "Users":
+        return Path("/") / cwd_parts[1] / cwd_parts[2]
+    return Path.home()
+
+
+def _whoami() -> str:
+    """Return the *effective* username — what the kernel sees, not what the
+    login session looks like.
+
+    ``os.getlogin()`` returns the user that originated the session, so
+    under ``sudo -u openclaw -i`` it still says the original login
+    user even though everything else runs as openclaw. ``getpwuid`` of
+    the effective uid gives the right answer.
+    """
+    try:
+        return pwd.getpwuid(os.geteuid()).pw_name
+    except KeyError:
+        return os.environ.get("USER", "?")
 
 
 def _load_config_or_default(path: Path) -> tuple[LocalConfig, str | None]:

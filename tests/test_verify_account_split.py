@@ -24,6 +24,8 @@ from scripts.verify_account_split import (
     Probe,
     ProbeResult,
     _load_config_or_default,
+    _resolve_user_home,
+    _whoami,
     build_probes,
     is_readable,
     render_report,
@@ -90,7 +92,7 @@ def test_is_readable_false_for_unreadable_dir(tmp_path: Path) -> None:
 
 
 def test_user_profile_expects_everything_readable(fake_cfg: LocalConfig) -> None:
-    probes = build_probes("user", fake_cfg)
+    probes = build_probes("user", fake_cfg, user_home=Path("/Users/testuser"))
     # Every probe in the user profile expects readable=True.
     assert all(p.expected_readable for p in probes)
     # Sensitive paths AND accessible paths both appear.
@@ -102,7 +104,7 @@ def test_user_profile_expects_everything_readable(fake_cfg: LocalConfig) -> None
 
 
 def test_agent_profile_expects_sensitive_denied_accessible_readable(fake_cfg: LocalConfig) -> None:
-    probes = build_probes("agent", fake_cfg)
+    probes = build_probes("agent", fake_cfg, user_home=Path("/Users/testuser"))
     by_label = {p.label: p for p in probes}
     # Sensitive paths must be expected-denied for the agent.
     for label in (
@@ -111,9 +113,9 @@ def test_agent_profile_expects_sensitive_denied_accessible_readable(fake_cfg: Lo
         "mapping/mapping.json",
         "config/local.json",
         ".env",
-        "~/Library/Mail/",
-        "~/Library/Messages/",
-        "~/Library/Messages/chat.db",
+        "/Users/testuser/Library/Mail/",
+        "/Users/testuser/Library/Messages/",
+        "/Users/testuser/Library/Messages/chat.db",
     ):
         assert by_label[label].expected_readable is False, label
     # Accessible paths must be expected-readable.
@@ -121,9 +123,22 @@ def test_agent_profile_expects_sensitive_denied_accessible_readable(fake_cfg: Lo
     assert by_label["/Users/Shared/The Brain Vault"].expected_readable is True
 
 
+def test_probe_paths_use_user_home_not_caller_home(fake_cfg: LocalConfig) -> None:
+    """The Library/Mail probe must point at the *human user's* home,
+    not whoever invoked the script. Otherwise running under
+    ``sudo -u openclaw -i`` would silently rewrite the probe to
+    /Users/openclaw/Library/Mail and report a meaningless PASS.
+    """
+    probes = build_probes("agent", fake_cfg, user_home=Path("/Users/alice"))
+    mail_probes = [p for p in probes if "Library/Mail" in p.label]
+    assert mail_probes
+    for p in mail_probes:
+        assert str(p.path).startswith("/Users/alice/")
+
+
 def test_unknown_profile_raises(fake_cfg: LocalConfig) -> None:
     with pytest.raises(ValueError):
-        build_probes("admin", fake_cfg)
+        build_probes("admin", fake_cfg, user_home=Path("/Users/testuser"))
 
 
 # --- ProbeResult ----------------------------------------------------------
@@ -221,3 +236,44 @@ def test_load_config_or_default_falls_back_on_missing_file(tmp_path: Path) -> No
     assert note is not None
     assert "not found" in note
     assert cfg.raw_staging_dir == Path("raw-staging")
+
+
+# --- _resolve_user_home + _whoami ----------------------------------------
+
+
+def test_resolve_user_home_explicit_arg_wins(tmp_path: Path) -> None:
+    explicit = tmp_path / "fake-home"
+    explicit.mkdir()
+    assert _resolve_user_home(explicit) == explicit.resolve()
+
+
+def test_resolve_user_home_auto_detects_from_users_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When cwd is /Users/<name>/something, that's the human user's home."""
+    fake_user_home = Path("/Users/aliceuser")
+    fake_cwd = fake_user_home / "projects" / "pii-data-sanitizer"
+    # We can't actually chdir into a non-existent /Users/aliceuser, so
+    # mock Path.cwd directly.
+    monkeypatch.setattr("scripts.verify_account_split.Path.cwd", lambda: fake_cwd)
+    assert _resolve_user_home(None) == fake_user_home
+
+
+def test_resolve_user_home_falls_back_to_path_home_when_cwd_unhelpful(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr("scripts.verify_account_split.Path.cwd", lambda: tmp_path)
+    monkeypatch.setattr("scripts.verify_account_split.Path.home", lambda: tmp_path / "fallback")
+    assert _resolve_user_home(None) == tmp_path / "fallback"
+
+
+def test_whoami_returns_effective_user() -> None:
+    """Effective uid should round-trip through pwd.getpwuid."""
+    name = _whoami()
+    assert isinstance(name, str)
+    assert name  # non-empty
+    # When the test runs as a real user, the name should match `id -un`.
+    import subprocess
+
+    expected = subprocess.run(["id", "-un"], capture_output=True, text=True).stdout.strip()
+    assert name == expected
