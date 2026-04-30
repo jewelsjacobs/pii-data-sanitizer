@@ -1,4 +1,4 @@
-.PHONY: install test lint format extract extract-ical extract-local-files extract-apple-mail extract-imessage sanitize sanitize-ical sanitize-local-files sanitize-apple-mail sanitize-imessage audit audit-ical audit-local-files audit-apple-mail audit-imessage promote promote-ical promote-local-files promote-apple-mail promote-imessage
+.PHONY: install test lint format extract extract-ical extract-local-files extract-apple-mail extract-imessage sanitize sanitize-ical sanitize-local-files sanitize-apple-mail sanitize-imessage audit audit-ical audit-local-files audit-apple-mail audit-imessage promote promote-ical promote-local-files promote-apple-mail promote-imessage state
 
 # Pass extra flags through to the underlying scripts, e.g.
 #   make sanitize-apple-mail ARGS="--since 2026-03-30"
@@ -76,3 +76,6 @@ promote-apple-mail:
 
 promote-imessage:
 	uv run python -m scripts.promote_to_inbox --source imessage $(ARGS)
+
+state:
+	uv run python -m scripts.show_state $(ARGS)

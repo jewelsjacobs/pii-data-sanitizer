@@ -17,6 +17,7 @@ from pathlib import Path
 from sanitizer.manifest import write_manifest
 from sanitizer.mapping import Mapping
 from sanitizer.pipeline import KeepList, SelfIdentity, sanitize
+from sanitizer.state import STATE_FILENAME, write_state
 from scripts._config import LocalConfig, load_config
 from scripts._filter import is_in_window, validate_since
 
@@ -172,6 +173,9 @@ def main(argv: list[str] | None = None) -> int:
         mapping_file_path=cfg.mapping_path,
     )
 
+    state = write_state(clean_dir, run_window=args.since)
+    state_path = clean_dir / STATE_FILENAME
+
     summary_parts = [f"Sanitized {records_out}/{records_in} record(s) → {clean_file}"]
     if skipped_window or skipped_dedupe:
         summary_parts.append(
@@ -179,6 +183,12 @@ def main(argv: list[str] | None = None) -> int:
             f"{skipped_dedupe} already in clean file (dedup)"
         )
     summary_parts.append(f"Manifest: {manifest_path}")
+    summary_parts.append(f"State: {state_path}")
+    suggested = state.get("suggested_next_since")
+    if suggested:
+        summary_parts.append(
+            f"Next incremental run: --since {suggested} (latest record date in clean file)"
+        )
     print("\n".join(summary_parts))
     return 0
 

@@ -48,10 +48,15 @@ Ground-truth fixtures under `tests/fixtures/ground-truth/` are **intentionally l
 | `make sanitize` | Run the sanitizer over each source's `/raw-staging` output.          |
 | `make audit`    | Run the Ollama-backed LLM auditor over `/clean-staging` and write findings to `logs/audit/`. |
 | `make promote`  | Render sanitized records as Obsidian-shaped markdown notes into the configured staging folder (outside the vault — review and move manually). |
+| `make state`    | Print per-source processing state (last run, record count, suggested `--since` for the next incremental run). |
 
 Per-source variants exist for every step (`make extract-apple-mail`, `make sanitize-ical`, …).
 Pass extra flags through `ARGS`, e.g. `make sanitize-apple-mail ARGS="--since 2026-03-30"`.
 
 ## Refreshing the data
 
-The sanitize / audit / promote steps accept `--since YYYY-MM-DD` so you can re-run the pipeline against only recent records without reprocessing the full archive. With `--since`, sanitize switches to **append + dedupe-by-`source_id`** mode so prior clean output is preserved; audit and promote filter their inputs to the window. The full step-by-step (per-source quirks, file-level cheat sheet, recovery notes, suggested cadence) lives in `files/refresh-runbook.md` (local-only).
+The sanitize / audit / promote steps accept `--since YYYY-MM-DD` so you can re-run the pipeline against only recent records without reprocessing the full archive. With `--since`, sanitize switches to **append + dedupe-by-`source_id`** mode so prior clean output is preserved; audit and promote filter their inputs to the window.
+
+Use `make state` to see the latest record date already in each clean file — that's the value to pass as `--since` next time. Sanitize also writes `clean-staging/<source>/state.json` and prints the suggested `--since` at the end of every run.
+
+The full step-by-step (per-source quirks, file-level cheat sheet, recovery notes, suggested cadence) lives in `files/refresh-runbook.md` (local-only).
