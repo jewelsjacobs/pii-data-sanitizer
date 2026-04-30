@@ -3,6 +3,12 @@ raw-staging/
 clean-staging/
 logs/
 
+# Promote staging — sanitized markdown is still vault-bound personal
+# data (subject lines, chat transcripts, calendar context). Default
+# location when promote_staging_dir is unset in config/local.json.
+promote-staging/
+sanitizer-promote-staging/
+
 # Never commit the mapping file or its review queue.
 # mapping/*.json covers the current M2/M3 unencrypted format; mapping.enc
 # is the future encrypted-at-rest format per the pipeline architecture.
