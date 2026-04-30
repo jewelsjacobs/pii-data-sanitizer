@@ -236,7 +236,13 @@ _KNOWN_TOKEN_STEMS = (
     "MEDICAL_INFO_REDACTED",
 )
 _BRACKETED_TOKEN_RE = re.compile(
-    r"^\s*\[?(?:" + "|".join(_KNOWN_TOKEN_STEMS) + r"|REDACTED_[A-Z_]+)" + r"(?:_\d+)?\]?\s*$"
+    r"^\s*\[?(?:"
+    + "|".join(_KNOWN_TOKEN_STEMS)
+    # REDACTED_* tokens may contain digits in the suffix (e.g.
+    # REDACTED_2FA). Allowing [A-Z0-9_]+ matches those without
+    # widening the rule to accept arbitrary uppercase strings.
+    + r"|REDACTED_[A-Z0-9_]+)"
+    + r"(?:_\d+)?\]?\s*$"
 )
 
 

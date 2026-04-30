@@ -251,6 +251,26 @@ RULES: list[Rule] = [
         ),
         replacement=r"\g<label>\g<sep>[REDACTED_GOV_ID]",
     ),
+    # Reference / confirmation / order / tracking numbers from automated
+    # messages (banking, shipping, healthcare). Same pattern-of-life
+    # threat-model as URL tracking numbers — per-event identifiers that
+    # correlate to specific transactions when leaked. Matches the labeled
+    # form only ("Ref# 12345", "Confirmation Number: ABC123") so generic
+    # numbers in prose don't get redacted.
+    #
+    # Audit shape that prompted this: "Ref# NNNNNN/ NNNNNNN" — the value
+    # group allows alphanumerics, dashes, and slash-separated continuations.
+    Rule(
+        name="labeled_reference",
+        pattern=re.compile(
+            r"(?im)(?P<label>\b(?:Ref(?:erence)?|Conf(?:irmation)?|Order|Tracking|"
+            r"Transaction|Trans|Receipt|Auth(?:orization)?|Invoice|Ticket)"
+            r"\s*#?\s*(?:Number|No\.?|#)?)"
+            r"(?P<sep>\s*[:#=]?\s*)"
+            r"(?P<value>[A-Z0-9][A-Z0-9-]{4,}(?:\s*/\s*[A-Z0-9][A-Z0-9-]+)?)\b"
+        ),
+        replacement=r"\g<label>\g<sep>[REDACTED_REF]",
+    ),
     # --- URLs + IPs ----------------------------------------------------------
     # --- addresses -----------------------------------------------------------
     # A "home address" label + street pattern → [HOME_ADDRESS] (non-reversible).

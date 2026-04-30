@@ -181,3 +181,30 @@ def test_2fa_otp_label() -> None:
     out = apply_rules("OTP: 824673")
     assert "[REDACTED_2FA]" in out
     assert "824673" not in out
+
+
+def test_labeled_ref_number() -> None:
+    """'Ref# NNNNNN' shapes from banking / shipping notifications."""
+    out = apply_rules("Payment posted. Ref# 1234567890")
+    assert "[REDACTED_REF]" in out
+    assert "1234567890" not in out
+
+
+def test_labeled_ref_with_slash_continuation() -> None:
+    """Audit case: 'Ref# NNNNNN/ NNNNNNN' (slash-separated continuation)."""
+    out = apply_rules("Bank Alert: Ref# 123456/ 7890123")
+    assert "[REDACTED_REF]" in out
+    assert "1234567890" not in out
+    assert "7890123" not in out
+
+
+def test_labeled_confirmation_number() -> None:
+    out = apply_rules("Confirmation Number: ABC-12345")
+    assert "[REDACTED_REF]" in out
+    assert "ABC-12345" not in out
+
+
+def test_labeled_tracking_alphanumeric() -> None:
+    out = apply_rules("Tracking #: 1Z999AA10123456789")
+    assert "[REDACTED_REF]" in out
+    assert "1Z999AA10123456789" not in out

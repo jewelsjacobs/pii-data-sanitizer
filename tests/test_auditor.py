@@ -284,6 +284,28 @@ def test_verifier_drops_unbracketed_sanitizer_token_excerpt() -> None:
     assert audit_record(record, client=client, model_name="m") == []
 
 
+def test_verifier_drops_redacted_token_with_digits() -> None:
+    """REDACTED_2FA contains a digit; the bracketed-token regex must
+    accept digits in the suffix or the verifier lets it through."""
+    client = _fake_client(
+        _finding_response(
+            {
+                "severity": "high",
+                "category": "credential",
+                "excerpt": "[REDACTED_2FA]",
+                "reasoning": "looks like a credential (it isn't — it's already redacted)",
+            }
+        )
+    )
+    record = {
+        "source": "imessage",
+        "source_id": "1",
+        "content": "Your code is [REDACTED_2FA]",
+        "metadata": {},
+    }
+    assert audit_record(record, client=client, model_name="m") == []
+
+
 def test_verifier_does_not_drop_legitimate_acronyms() -> None:
     """The unbracketed-token check must not match generic acronyms like
     USA, API, NASA — those could be legitimate findings of an
