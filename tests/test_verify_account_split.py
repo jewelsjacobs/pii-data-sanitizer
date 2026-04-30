@@ -23,6 +23,7 @@ from scripts._config import LocalConfig
 from scripts.verify_account_split import (
     Probe,
     ProbeResult,
+    _load_config_or_default,
     build_probes,
     is_readable,
     render_report,
@@ -174,3 +175,49 @@ def test_render_report_shows_failure_count_and_pointer_to_doc() -> None:
     assert "docs/account-split.md" in out
     assert "raw-staging/" in out
     assert "FAIL (expected denied, got readable)" in out
+
+
+def test_render_report_includes_config_note_when_provided() -> None:
+    probe = Probe(Path("/clean"), "clean-staging/", expected_readable=True)
+    results = [ProbeResult(probe, actual_readable=True)]
+    out = render_report(
+        "agent",
+        "openclaw",
+        results,
+        config_note="config not readable — boundary working.",
+    )
+    assert "note: config not readable — boundary working." in out
+
+
+# --- _load_config_or_default ---------------------------------------------
+
+
+def test_load_config_or_default_returns_config_when_readable(tmp_path: Path) -> None:
+    cfg_path = tmp_path / "local.json"
+    cfg_path.write_text('{"raw_staging_dir": "raw-staging"}')
+    cfg, note = _load_config_or_default(cfg_path)
+    assert note is None
+    assert cfg.raw_staging_dir == Path("raw-staging")
+
+
+def test_load_config_or_default_falls_back_on_permission_error(tmp_path: Path) -> None:
+    if os.geteuid() == 0:
+        pytest.skip("root bypasses POSIX permissions")
+    cfg_path = tmp_path / "local.json"
+    cfg_path.write_text("{}")
+    cfg_path.chmod(0)
+    try:
+        cfg, note = _load_config_or_default(cfg_path)
+        assert note is not None
+        assert "boundary is working" in note
+        # Falls back to LocalConfig defaults.
+        assert cfg.raw_staging_dir == Path("raw-staging")
+    finally:
+        cfg_path.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+
+def test_load_config_or_default_falls_back_on_missing_file(tmp_path: Path) -> None:
+    cfg, note = _load_config_or_default(tmp_path / "no-such.json")
+    assert note is not None
+    assert "not found" in note
+    assert cfg.raw_staging_dir == Path("raw-staging")

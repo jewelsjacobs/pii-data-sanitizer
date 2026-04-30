@@ -120,15 +120,27 @@ def run_probes(probes: list[Probe]) -> list[ProbeResult]:
     return [ProbeResult(p, is_readable(p.path)) for p in probes]
 
 
-def render_report(profile: str, who: str, results: list[ProbeResult]) -> str:
+def render_report(
+    profile: str,
+    who: str,
+    results: list[ProbeResult],
+    *,
+    config_note: str | None = None,
+) -> str:
     lines = [
         "Verifying account-split boundary",
         f"  profile: {profile}",
         f"  running as: {who} (uid={os.geteuid()})",
-        "",
-        f"  {'status':<48}  {'readable?':<10}  path",
-        f"  {'-' * 48}  {'-' * 10}  ----",
     ]
+    if config_note:
+        lines.append(f"  note: {config_note}")
+    lines.extend(
+        [
+            "",
+            f"  {'status':<48}  {'readable?':<10}  path",
+            f"  {'-' * 48}  {'-' * 10}  ----",
+        ]
+    )
     for r in results:
         readable_str = "yes" if r.actual_readable else "no"
         lines.append(f"  {r.status:<48}  {readable_str:<10}  {r.probe.label}")
@@ -157,7 +169,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    cfg = load_config(args.config)
+    cfg, config_note = _load_config_or_default(args.config)
     probes = build_probes(args.profile, cfg)
     results = run_probes(probes)
 
@@ -166,8 +178,39 @@ def main(argv: list[str] | None = None) -> int:
     except OSError:
         who = os.environ.get("USER", "?")
 
-    print(render_report(args.profile, who, results))
+    print(render_report(args.profile, who, results, config_note=config_note))
     return 0 if all(r.passed for r in results) else 1
+
+
+def _load_config_or_default(path: Path) -> tuple[LocalConfig, str | None]:
+    """Load ``path``; on read denial, fall back to LocalConfig defaults.
+
+    The agent profile is *expected* to fail loading ``config/local.json``
+    — that's literally one of the things we want denied. Crashing on
+    that denial would make the verification script useless from the
+    agent side, so we degrade gracefully and probe the default paths
+    instead. The return tuple's second element is a one-line note for
+    the report so the user sees that the fallback kicked in.
+    """
+    try:
+        return load_config(path), None
+    except PermissionError:
+        return (
+            LocalConfig(),
+            f"config not readable ({path}) — using project defaults; "
+            "for the agent profile this is expected and the boundary is working.",
+        )
+    except FileNotFoundError:
+        return (
+            LocalConfig(),
+            f"config not found ({path}) — using project defaults.",
+        )
+    except SystemExit:
+        # load_config exits(2) when the file is missing. Same outcome.
+        return (
+            LocalConfig(),
+            f"config not found ({path}) — using project defaults.",
+        )
 
 
 if __name__ == "__main__":
