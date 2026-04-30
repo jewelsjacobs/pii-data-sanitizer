@@ -36,5 +36,8 @@
   "mapping_path": "mapping/mapping.json",
 
   "raw_staging_dir": "/Users/REPLACEME/projects/pii-data-sanitizer/raw-staging",
-  "clean_staging_dir": "/Users/REPLACEME/projects/pii-data-sanitizer/clean-staging"
+  "clean_staging_dir": "/Users/REPLACEME/projects/pii-data-sanitizer/clean-staging",
+
+  "_comment_promote": "Where the M6.5 promote step writes Obsidian-shaped markdown notes. This is OUTSIDE the vault by design — the user reviews the staging folder and manually moves approved notes into the vault's 00-Inbox/. Keeps the trust boundary intact (sanitizer + promote run as the user; agents run elsewhere).",
+  "promote_staging_dir": "/Users/REPLACEME/sanitizer-promote-staging"
 }

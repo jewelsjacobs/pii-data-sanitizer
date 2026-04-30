@@ -29,6 +29,7 @@ class LocalConfig:
     mapping_path: Path = Path("mapping/mapping.json")
     raw_staging_dir: Path = Path("raw-staging")
     clean_staging_dir: Path = Path("clean-staging")
+    promote_staging_dir: Path = Path("promote-staging")
 
 
 def load_config(path: Path = DEFAULT_CONFIG_PATH) -> LocalConfig:
@@ -53,6 +54,7 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> LocalConfig:
         mapping_path=Path(data.get("mapping_path", "mapping/mapping.json")),
         raw_staging_dir=Path(data.get("raw_staging_dir", "raw-staging")),
         clean_staging_dir=Path(data.get("clean_staging_dir", "clean-staging")),
+        promote_staging_dir=Path(data.get("promote_staging_dir", "promote-staging")).expanduser(),
     )
 
 

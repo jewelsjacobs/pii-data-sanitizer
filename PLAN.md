@@ -124,6 +124,40 @@ Post-hoc LLM sweep for missed PII.
 
 **Done when:** spot-check finds no PII leaks and auditor produces zero high-severity flags.
 
+## M6.5: Promote step — sanitizer JSONL → Obsidian markdown
+
+The bridge between sanitizer output and the vault's Crew agents.
+
+**Build:**
+- `sanitizer/promote.py` — per-source converters that turn one (or, for
+  imessage, several) sanitized record(s) into `(filename, markdown)`
+  pairs. Filename matches the Crew convention
+  `YYYY-MM-DD — Type — Title.md`. Frontmatter matches existing Crew
+  templates (Postman email-info / meeting, Scribe reference) so the
+  Sorter routes notes without retraining. iMessage groups by
+  `(chat_identifier, day)` into one transcript note per group.
+- `scripts/promote_to_inbox.py` — CLI: read
+  `clean-staging/<source>/events.jsonl`, write notes into
+  `promote_staging_dir/<source>/`. Skip-if-exists by default,
+  `--overwrite` flag for re-runs. Disambiguates filename collisions
+  with `(N)` suffixes so no note is silently overwritten.
+- `promote_staging_dir` field in `LocalConfig` + `config/local.example.json`.
+  Default points OUTSIDE the vault — `~/sanitizer-promote-staging` —
+  by design. The user reviews and manually moves approved notes into
+  the vault's `00-Inbox/`. This matches the Apple Health Option-B
+  pattern already in the vault and preserves the trust boundary
+  (sanitizer + promote run as the user; agents run separately).
+- Makefile targets: `promote`, `promote-ical`, `promote-local-files`,
+  `promote-apple-mail`, `promote-imessage`.
+- `tests/test_promote.py` — per-source unit tests covering filename
+  shape, frontmatter fields, sanitized-token passthrough, edge cases
+  (empty content, missing fields, unsafe filename chars, double quotes
+  in YAML), and imessage chat-day grouping.
+
+**Done when:** `make test` passes; `make promote-<source>` produces
+markdown notes in the staging folder for any source the user has
+already sanitized.
+
 ## M7: Account split (hard gate)
 
 The filesystem-level gate between raw and clean staging.
@@ -138,7 +172,32 @@ The filesystem-level gate between raw and clean staging.
 
 ## Where we are
 
-Current milestone: **M5 complete.** Next up: **M6 — First real full run.**
+Current milestone: **M6.5 complete.** Next up: **M7 — Account split.**
+
+M6 notes: real-run iteration cycles produced clean output for ical,
+apple-mail, and imessage (local-files deferred per user request).
+Auditor reports zero high-severity findings on each. Rules tightened
+along the way: every URL shape collapses to `[REDACTED_LINK]`;
+`labeled_2fa_code` runs before `labeled_password` so 2FA tokens don't
+get re-labeled as credentials; `labeled_gov_id` accepts multi-word
+labels and a parenthetical absorber; `ssn_last_four` and
+`account_ending` patterns added; phone regex widened for
+``(NNN)-NNN- NNNN``-shaped audit findings. The auditor itself gained
+a verifier (substring + word-boundary keep-list match + bracketed-token
+filter) so hallucinated findings, keep-list false positives, and
+already-redacted tokens stop reaching the high-severity report.
+
+M6.5 notes: `sanitizer/promote.py` exposes `promote_ical`,
+`promote_apple_mail`, `promote_local_files`, and `promote_imessage`.
+`scripts/promote_to_inbox.py` drives them from
+`clean-staging/<source>/events.jsonl` into
+`promote_staging_dir/<source>/`. Notes follow the Crew filename
+convention and use frontmatter compatible with Postman's email-info /
+meeting templates and Scribe's reference template. iMessage records
+group by `(chat_identifier, day)` so a thread reads as one note.
+Promote staging is OUTSIDE the vault by design — the user reviews
+and moves approved notes manually into `00-Inbox/`. 209 tests
+passing (19 new promote cases).
 
 M3 notes: `sources/ical/adapter.py`, `sanitizer/manifest.py`,
 `scripts/extract_ical.py`, `scripts/sanitize_source.py`. Ical run

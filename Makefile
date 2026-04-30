@@ -1,4 +1,4 @@
-.PHONY: install test lint format extract extract-ical extract-local-files extract-apple-mail extract-imessage sanitize sanitize-ical sanitize-local-files sanitize-apple-mail sanitize-imessage audit audit-ical audit-local-files audit-apple-mail audit-imessage
+.PHONY: install test lint format extract extract-ical extract-local-files extract-apple-mail extract-imessage sanitize sanitize-ical sanitize-local-files sanitize-apple-mail sanitize-imessage audit audit-ical audit-local-files audit-apple-mail audit-imessage promote promote-ical promote-local-files promote-apple-mail promote-imessage
 
 install:
 	uv sync
@@ -56,3 +56,17 @@ audit-apple-mail:
 
 audit-imessage:
 	uv run python -m scripts.audit_source --source imessage
+
+promote: promote-ical promote-local-files promote-apple-mail promote-imessage
+
+promote-ical:
+	uv run python -m scripts.promote_to_inbox --source ical
+
+promote-local-files:
+	uv run python -m scripts.promote_to_inbox --source local-files
+
+promote-apple-mail:
+	uv run python -m scripts.promote_to_inbox --source apple-mail
+
+promote-imessage:
+	uv run python -m scripts.promote_to_inbox --source imessage
