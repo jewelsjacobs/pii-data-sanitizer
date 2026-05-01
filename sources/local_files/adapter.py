@@ -40,6 +40,7 @@ def extract_files(
     include_extensions: frozenset[str] | None = None,
     skip_unsupported: bool = False,
     continue_on_error: bool = False,
+    exclude_dirs: list[Path] | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Yield normalized records from every supported file under ``paths``.
 
@@ -71,6 +72,12 @@ def extract_files(
     — one-shot historical runs across heterogeneous archives where a
     handful of broken files shouldn't stop you from ingesting the
     other 16,995.
+
+    ``exclude_dirs`` skips any file whose path is under one of the
+    given directories. Use this to prune known-noise subtrees (icon
+    libraries, third-party Obsidian vaults syncing into iCloud,
+    corrupted Dropbox-to-iCloud migration dumps) without having to
+    enumerate all the *good* dirs.
     """
     if include_extensions is not None:
         bad = include_extensions - SUPPORTED_EXTENSIONS
@@ -83,11 +90,29 @@ def extract_files(
     else:
         active_extensions = SUPPORTED_EXTENSIONS
 
+    excluded = [Path(d).expanduser().resolve() for d in (exclude_dirs or [])]
+
+    files_seen = 0
+    files_extracted = 0
+    files_skipped = 0
+    progress_every = 100
+
+    def _heartbeat() -> None:
+        if files_seen and files_seen % progress_every == 0:
+            print(
+                f"  ...processed {files_seen} files "
+                f"({files_extracted} extracted, {files_skipped} skipped)",
+                file=sys.stderr,
+                flush=True,
+            )
+
     for entry in paths:
         entry = Path(entry)
         if entry.is_dir():
             for file in sorted(entry.rglob("*")):
                 if not file.is_file():
+                    continue
+                if _is_under_any(file, excluded):
                     continue
                 ext = file.suffix.lower()
                 if ext in UNSUPPORTED_EXTENSIONS:
@@ -96,16 +121,26 @@ def extract_files(
                             f"warning: {file}: legacy .doc skipped (--skip-unsupported)",
                             file=sys.stderr,
                         )
+                        files_seen += 1
+                        files_skipped += 1
+                        _heartbeat()
                         continue
                     raise AdapterError(
                         f"{file}: legacy .doc is not supported. "
                         f"Convert to .docx or .pdf and re-run."
                     )
                 if ext in active_extensions:
+                    files_seen += 1
                     record = _safe_extract(file, continue_on_error=continue_on_error)
                     if record is not None:
+                        files_extracted += 1
                         yield record
+                    else:
+                        files_skipped += 1
+                    _heartbeat()
         elif entry.is_file():
+            if _is_under_any(entry, excluded):
+                continue
             ext = entry.suffix.lower()
             if ext in UNSUPPORTED_EXTENSIONS:
                 if skip_unsupported:
@@ -124,6 +159,32 @@ def extract_files(
                 yield record
         else:
             raise AdapterError(f"Not a file or directory: {entry}")
+
+    # Final summary, regardless of whether the periodic threshold landed exactly.
+    if files_seen:
+        print(
+            f"  total: {files_seen} files visited "
+            f"({files_extracted} extracted, {files_skipped} skipped)",
+            file=sys.stderr,
+            flush=True,
+        )
+
+
+def _is_under_any(path: Path, dirs: list[Path]) -> bool:
+    """True iff ``path`` (resolved) lives under one of ``dirs`` (already resolved)."""
+    if not dirs:
+        return False
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return False
+    for d in dirs:
+        try:
+            resolved.relative_to(d)
+            return True
+        except ValueError:
+            continue
+    return False
 
 
 def _safe_extract(file: Path, *, continue_on_error: bool) -> dict[str, Any] | None:

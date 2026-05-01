@@ -73,6 +73,18 @@ def main(argv: list[str] | None = None) -> int:
             "other ~17,000."
         ),
     )
+    parser.add_argument(
+        "--exclude-dir",
+        action="append",
+        type=Path,
+        default=[],
+        help=(
+            "Skip every file under this directory. May be passed multiple "
+            "times. Useful to prune known-noise subtrees (third-party icon "
+            "libraries, other Obsidian vaults syncing into iCloud) without "
+            "having to enumerate the dirs you do want."
+        ),
+    )
     args = parser.parse_args(argv)
 
     cfg: LocalConfig = load_config(args.config)
@@ -96,11 +108,10 @@ def main(argv: list[str] | None = None) -> int:
             include_extensions=args.include_extensions,
             skip_unsupported=args.skip_unsupported,
             continue_on_error=args.continue_on_error,
+            exclude_dirs=args.exclude_dir,
         ):
             fout.write(json.dumps(record) + "\n")
             count += 1
-            if count % 500 == 0:
-                print(f"  ...{count} records", file=sys.stderr, flush=True)
 
     print(f"Extracted {count} local-files record(s) → {out_file}")
     return 0

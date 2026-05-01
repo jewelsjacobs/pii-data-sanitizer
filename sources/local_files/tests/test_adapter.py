@@ -367,3 +367,66 @@ def test_continue_on_error_combines_with_skip_unsupported(
     captured = capsys.readouterr()
     assert ".doc skipped" in captured.err
     assert "extraction failed" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# exclude_dirs (skip noise subtrees)
+# ---------------------------------------------------------------------------
+
+
+def test_exclude_dirs_prunes_a_subtree(tmp_path: Path) -> None:
+    """Files under an excluded subdirectory are never visited or extracted."""
+    (tmp_path / "good.txt").write_text("kept")
+    noise = tmp_path / "noise_subtree"
+    noise.mkdir()
+    (noise / "a.txt").write_text("skip me")
+    (noise / "b.txt").write_text("skip me too")
+    (noise / "deep").mkdir()
+    (noise / "deep" / "c.txt").write_text("definitely skip")
+
+    records = list(extract_files([tmp_path], exclude_dirs=[noise]))
+    contents = [r["content"] for r in records]
+    assert contents == ["kept"]
+
+
+def test_exclude_dirs_multiple_subtrees(tmp_path: Path) -> None:
+    """Multiple exclude dirs all combine."""
+    (tmp_path / "good.txt").write_text("kept")
+    a = tmp_path / "a"
+    a.mkdir()
+    (a / "noise.txt").write_text("a-noise")
+    b = tmp_path / "b"
+    b.mkdir()
+    (b / "noise.txt").write_text("b-noise")
+    records = list(extract_files([tmp_path], exclude_dirs=[a, b]))
+    contents = [r["content"] for r in records]
+    assert contents == ["kept"]
+
+
+def test_exclude_dirs_default_empty_keeps_everything(tmp_path: Path) -> None:
+    (tmp_path / "a.txt").write_text("alpha")
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "b.txt").write_text("beta")
+    records = list(extract_files([tmp_path], exclude_dirs=None))
+    assert len(records) == 2
+
+
+def test_exclude_dirs_no_match_keeps_everything(tmp_path: Path) -> None:
+    """An exclude dir that doesn't actually overlap with the walk is a no-op."""
+    (tmp_path / "a.txt").write_text("alpha")
+    elsewhere = tmp_path.parent / "totally-elsewhere-no-match"
+    records = list(extract_files([tmp_path], exclude_dirs=[elsewhere]))
+    assert len(records) == 1
+
+
+def test_progress_summary_emitted_on_walk_completion(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The walk should emit a final 'total:' line so caller knows what happened."""
+    (tmp_path / "a.txt").write_text("alpha")
+    (tmp_path / "b.txt").write_text("beta")
+    list(extract_files([tmp_path]))
+    captured = capsys.readouterr()
+    assert "total:" in captured.err
+    assert "2 files visited" in captured.err
+    assert "2 extracted" in captured.err
