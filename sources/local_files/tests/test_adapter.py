@@ -298,3 +298,72 @@ def test_skip_unsupported_default_still_halts(tmp_path: Path) -> None:
     p.write_bytes(b"legacy")
     with pytest.raises(AdapterError, match="Convert to .docx or .pdf"):
         list(extract_files([p]))
+
+
+# ---------------------------------------------------------------------------
+# continue_on_error (per-file extraction failures)
+# ---------------------------------------------------------------------------
+
+
+def test_continue_on_error_skips_corrupted_pdf_in_walk(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A corrupted PDF in a walk doesn't stop processing of the good files."""
+    # One good txt file
+    (tmp_path / "good.txt").write_text("alpha")
+    # One PDF that pdfplumber can't open (no /Root, etc.)
+    (tmp_path / "broken.pdf").write_bytes(b"%PDF-1.4\nnot really a pdf\n%%EOF")
+    records = list(extract_files([tmp_path], continue_on_error=True))
+    formats = sorted(r["metadata"]["format"] for r in records)
+    assert formats == ["txt"]  # broken.pdf was skipped, good.txt processed
+    captured = capsys.readouterr()
+    assert "broken.pdf" in captured.err
+    assert "extraction failed" in captured.err
+
+
+def test_continue_on_error_skips_corrupted_pdf_explicit_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    p = tmp_path / "broken.pdf"
+    p.write_bytes(b"%PDF-1.4\nnot really a pdf\n%%EOF")
+    records = list(extract_files([p], continue_on_error=True))
+    assert records == []
+    captured = capsys.readouterr()
+    assert "broken.pdf" in captured.err
+    assert "extraction failed" in captured.err
+
+
+def test_continue_on_error_default_still_halts_on_corrupted_pdf(tmp_path: Path) -> None:
+    """The default fail-loud behavior is unchanged when the flag isn't set."""
+    p = tmp_path / "broken.pdf"
+    p.write_bytes(b"%PDF-1.4\nnot really a pdf\n%%EOF")
+    with pytest.raises(AdapterError):
+        list(extract_files([p]))
+
+
+def test_continue_on_error_skips_non_utf8_txt(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The other halt path — UTF-8 decode failure on .txt — also becomes skip."""
+    (tmp_path / "ok.txt").write_text("ok")
+    (tmp_path / "latin1.txt").write_bytes(b"\xff\xfe\x00garbage")
+    records = list(extract_files([tmp_path], continue_on_error=True))
+    formats = [r["metadata"]["format"] for r in records]
+    assert formats == ["txt"]
+    captured = capsys.readouterr()
+    assert "latin1.txt" in captured.err
+
+
+def test_continue_on_error_combines_with_skip_unsupported(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Both escape hatches active at once — the common "just get me through it" mode."""
+    (tmp_path / "good.txt").write_text("alpha")
+    (tmp_path / "legacy.doc").write_bytes(b"legacy")
+    (tmp_path / "broken.pdf").write_bytes(b"%PDF-1.4\nnope\n%%EOF")
+    records = list(extract_files([tmp_path], skip_unsupported=True, continue_on_error=True))
+    formats = [r["metadata"]["format"] for r in records]
+    assert formats == ["txt"]
+    captured = capsys.readouterr()
+    assert ".doc skipped" in captured.err
+    assert "extraction failed" in captured.err

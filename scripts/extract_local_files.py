@@ -61,6 +61,18 @@ def main(argv: list[str] | None = None) -> int:
             "than convert .doc files to .docx first."
         ),
     )
+    parser.add_argument(
+        "--continue-on-error",
+        action="store_true",
+        help=(
+            "Warn-and-skip on per-file extraction failures (corrupted PDFs, "
+            "password-protected docx, UTF-8 decode failures, permission denied) "
+            "instead of halting the whole run. Default is to halt. Use this "
+            "with --skip-unsupported on heterogeneous historical archives where "
+            "a handful of broken files shouldn't stop you from ingesting the "
+            "other ~17,000."
+        ),
+    )
     args = parser.parse_args(argv)
 
     cfg: LocalConfig = load_config(args.config)
@@ -83,6 +95,7 @@ def main(argv: list[str] | None = None) -> int:
             source_dirs,
             include_extensions=args.include_extensions,
             skip_unsupported=args.skip_unsupported,
+            continue_on_error=args.continue_on_error,
         ):
             fout.write(json.dumps(record) + "\n")
             count += 1

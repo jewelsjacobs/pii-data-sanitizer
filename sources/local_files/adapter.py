@@ -39,6 +39,7 @@ def extract_files(
     *,
     include_extensions: frozenset[str] | None = None,
     skip_unsupported: bool = False,
+    continue_on_error: bool = False,
 ) -> Iterator[dict[str, Any]]:
     """Yield normalized records from every supported file under ``paths``.
 
@@ -61,6 +62,15 @@ def extract_files(
     decided to accept the loss (e.g. a one-shot historical archive run
     where you'd rather get most of the files than convert 100 .doc
     files first).
+
+    ``continue_on_error=True`` turns per-file extraction failures
+    (corrupted PDFs, password-protected docx, UTF-8 decode failures,
+    permission denied on iCloud stubs, etc.) into stderr warnings + skip
+    instead of halting the whole run. Default ``False`` matches the
+    fail-loud policy. Use with the same intent as ``skip_unsupported``
+    — one-shot historical runs across heterogeneous archives where a
+    handful of broken files shouldn't stop you from ingesting the
+    other 16,995.
     """
     if include_extensions is not None:
         bad = include_extensions - SUPPORTED_EXTENSIONS
@@ -92,7 +102,9 @@ def extract_files(
                         f"Convert to .docx or .pdf and re-run."
                     )
                 if ext in active_extensions:
-                    yield _file_to_record(file)
+                    record = _safe_extract(file, continue_on_error=continue_on_error)
+                    if record is not None:
+                        yield record
         elif entry.is_file():
             ext = entry.suffix.lower()
             if ext in UNSUPPORTED_EXTENSIONS:
@@ -107,9 +119,30 @@ def extract_files(
                 )
             if ext not in active_extensions:
                 raise AdapterError(f"{entry}: unsupported extension {ext!r}")
-            yield _file_to_record(entry)
+            record = _safe_extract(entry, continue_on_error=continue_on_error)
+            if record is not None:
+                yield record
         else:
             raise AdapterError(f"Not a file or directory: {entry}")
+
+
+def _safe_extract(file: Path, *, continue_on_error: bool) -> dict[str, Any] | None:
+    """Run ``_file_to_record`` with optional per-file error tolerance.
+
+    Returns ``None`` when extraction failed and ``continue_on_error``
+    swallowed the exception (a stderr warning was logged). Otherwise
+    returns the record, or re-raises.
+    """
+    try:
+        return _file_to_record(file)
+    except (AdapterError, OSError) as exc:
+        if continue_on_error:
+            print(
+                f"warning: {file}: extraction failed ({exc}); skipped (--continue-on-error)",
+                file=sys.stderr,
+            )
+            return None
+        raise
 
 
 def _file_to_record(path: Path) -> dict[str, Any]:
