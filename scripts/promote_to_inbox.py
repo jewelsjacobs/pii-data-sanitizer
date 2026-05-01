@@ -29,7 +29,7 @@ from sanitizer.promote import (
     promote_local_files,
 )
 from scripts._config import LocalConfig, load_config
-from scripts._filter import is_in_window, validate_since
+from scripts._filter import is_in_window, validate_since, validate_until
 
 # Sources that promote one note per record.
 _PER_RECORD_PROMOTERS = {
@@ -60,9 +60,19 @@ def main(argv: list[str] | None = None) -> int:
         type=validate_since,
         default=None,
         help=(
-            "Only promote records whose timestamp is on or after this YYYY-MM-DD. "
-            "Skip-if-exists in the staging folder still applies, so older notes "
-            "from prior runs are left alone."
+            "Only promote records whose timestamp is on or after this YYYY-MM-DD "
+            "(inclusive). Skip-if-exists in the staging folder still applies, so "
+            "older notes from prior runs are left alone."
+        ),
+    )
+    parser.add_argument(
+        "--until",
+        type=validate_until,
+        default=None,
+        help=(
+            "Only promote records whose timestamp is strictly before this "
+            "YYYY-MM-DD (exclusive upper bound). Pair with --since for clean "
+            "non-overlapping windows: --since A --until B then --since B --until C."
         ),
     )
     args = parser.parse_args(argv)
@@ -80,16 +90,27 @@ def main(argv: list[str] | None = None) -> int:
     out_dir = cfg.promote_staging_dir / args.source
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    if args.since or args.until:
+        window_parts = []
+        if args.since:
+            window_parts.append(f"--since {args.since}")
+        if args.until:
+            window_parts.append(f"--until {args.until}")
+        window_label = " ".join(window_parts)
+    else:
+        window_label = "full"
     print(
         f"Promoting {args.source} → {out_dir}\n"
         f"   from: {clean_file}\n"
-        f"   window: {args.since if args.since else 'full'}\n"
+        f"   window: {window_label}\n"
         f"   note: this is OUTSIDE the vault — review and move manually.",
         file=sys.stderr,
         flush=True,
     )
 
-    records = (rec for rec in _iter_records(clean_file) if is_in_window(rec, args.since))
+    records = (
+        rec for rec in _iter_records(clean_file) if is_in_window(rec, args.since, args.until)
+    )
 
     if args.source == "imessage":
         notes = promote_imessage(records)

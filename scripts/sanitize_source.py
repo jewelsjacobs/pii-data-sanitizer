@@ -19,7 +19,7 @@ from sanitizer.mapping import Mapping
 from sanitizer.pipeline import KeepList, SelfIdentity, sanitize
 from sanitizer.state import STATE_FILENAME, write_state
 from scripts._config import LocalConfig, load_config
-from scripts._filter import is_in_window, validate_since
+from scripts._filter import is_in_window, validate_since, validate_until
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -35,9 +35,20 @@ def main(argv: list[str] | None = None) -> int:
         type=validate_since,
         default=None,
         help=(
-            "Only sanitize records whose timestamp is on or after this YYYY-MM-DD. "
-            "When set, the existing clean file is preserved and new records are "
-            "appended (deduped by source_id) so prior runs aren't overwritten."
+            "Only sanitize records whose timestamp is on or after this YYYY-MM-DD "
+            "(inclusive). When set, the existing clean file is preserved and new "
+            "records are appended (deduped by source_id) so prior runs aren't "
+            "overwritten."
+        ),
+    )
+    parser.add_argument(
+        "--until",
+        type=validate_until,
+        default=None,
+        help=(
+            "Only sanitize records whose timestamp is strictly before this "
+            "YYYY-MM-DD (exclusive upper bound). Pair with --since for "
+            "non-overlapping windows: --since A --until B then --since B --until C."
         ),
     )
     args = parser.parse_args(argv)
@@ -60,10 +71,11 @@ def main(argv: list[str] | None = None) -> int:
     clean_dir.mkdir(parents=True, exist_ok=True)
     clean_file = clean_dir / "events.jsonl"
 
-    # In --since mode, preserve already-sanitized records and skip any
-    # raw record whose source_id is already in the clean file. Without
-    # --since, the clean file is rewritten from scratch as before.
-    incremental = args.since is not None
+    # In windowed mode (any --since or --until), preserve already-sanitized
+    # records and skip any raw record whose source_id is already in the
+    # clean file. Without either bound, the clean file is rewritten from
+    # scratch as before.
+    incremental = args.since is not None or args.until is not None
     existing_ids: set[str] = set()
     if incremental and clean_file.exists():
         with clean_file.open() as fexisting:
@@ -83,7 +95,15 @@ def main(argv: list[str] | None = None) -> int:
     # One line per record, so wc-l is correct. Extra cost is trivial
     # compared to the NER run that follows.
     total = sum(1 for line in raw_file.open() if line.strip())
-    window_label = f"window: --since {args.since}" if args.since else "window: full"
+    if args.since or args.until:
+        window_parts = []
+        if args.since:
+            window_parts.append(f"--since {args.since}")
+        if args.until:
+            window_parts.append(f"--until {args.until}")
+        window_label = "window: " + " ".join(window_parts)
+    else:
+        window_label = "window: full"
     mode_label = (
         f"mode: append+dedupe ({len(existing_ids)} existing records preserved)"
         if incremental
@@ -128,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
                 continue
             records_in += 1
             raw_record = json.loads(line)
-            if not is_in_window(raw_record, args.since):
+            if not is_in_window(raw_record, args.since, args.until):
                 skipped_window += 1
                 continue
             sid = raw_record.get("source_id")

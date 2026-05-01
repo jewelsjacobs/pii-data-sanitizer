@@ -27,7 +27,7 @@ from pathlib import Path
 
 from sanitizer.auditor import DEFAULT_MODEL, AuditConfig, AuditorError, audit_source
 from scripts._config import LocalConfig, load_config
-from scripts._filter import is_in_window, validate_since
+from scripts._filter import is_in_window, validate_since, validate_until
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -73,9 +73,19 @@ def main(argv: list[str] | None = None) -> int:
         type=validate_since,
         default=None,
         help=(
-            "Only audit records whose timestamp is on or after this YYYY-MM-DD. "
-            "The clean file is read into a temp file containing just the windowed "
-            "subset; the original is untouched."
+            "Only audit records whose timestamp is on or after this YYYY-MM-DD "
+            "(inclusive). The clean file is read into a temp file containing just "
+            "the windowed subset; the original is untouched."
+        ),
+    )
+    parser.add_argument(
+        "--until",
+        type=validate_until,
+        default=None,
+        help=(
+            "Only audit records whose timestamp is strictly before this "
+            "YYYY-MM-DD (exclusive upper bound). Pairs with --since for "
+            "non-overlapping windows."
         ),
     )
     args = parser.parse_args(argv)
@@ -89,12 +99,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    # When --since is set, write a temp JSONL containing only records in
-    # the window and audit that. Saves us touching the auditor's API.
+    # When a date window is set, write a temp JSONL containing only records
+    # in the window and audit that. Saves us touching the auditor's API.
     audit_input_path = events_path
     temp_handle: tempfile._TemporaryFileWrapper[str] | None = None
     in_window = 0
-    if args.since is not None:
+    if args.since is not None or args.until is not None:
         temp_handle = tempfile.NamedTemporaryFile(  # noqa: SIM115 — closed in finally below
             mode="w",
             suffix=".jsonl",
@@ -109,13 +119,18 @@ def main(argv: list[str] | None = None) -> int:
                     rec = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if is_in_window(rec, args.since):
+                if is_in_window(rec, args.since, args.until):
                     temp_handle.write(json.dumps(rec) + "\n")
                     in_window += 1
         temp_handle.close()
         audit_input_path = Path(temp_handle.name)
+        bounds = []
+        if args.since:
+            bounds.append(f"--since {args.since}")
+        if args.until:
+            bounds.append(f"--until {args.until}")
         print(
-            f"--since {args.since}: {in_window} record(s) in window → {audit_input_path}",
+            f"{' '.join(bounds)}: {in_window} record(s) in window → {audit_input_path}",
             file=sys.stderr,
             flush=True,
         )
@@ -140,12 +155,21 @@ def main(argv: list[str] | None = None) -> int:
                 flush=True,
             )
 
+    if args.since or args.until:
+        window_parts = []
+        if args.since:
+            window_parts.append(f"--since {args.since}")
+        if args.until:
+            window_parts.append(f"--until {args.until}")
+        window_label = " ".join(window_parts)
+    else:
+        window_label = "full"
     print(
         f"Auditing {args.source}: {audit_input_path}\n"
         f"   → {log_path}\n"
         f"   model: {args.model or 'default (resolve at runtime)'}\n"
         f"   sample: {sample if sample else 'all'}\n"
-        f"   window: {args.since if args.since else 'full'}",
+        f"   window: {window_label}",
         file=sys.stderr,
         flush=True,
     )
