@@ -15,6 +15,7 @@ antiword) has heavy or fragile install requirements. Convert to
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from hashlib import sha256
@@ -33,14 +34,45 @@ class AdapterError(RuntimeError):
     """Raised when the adapter encounters input it refuses to pass through."""
 
 
-def extract_files(paths: list[Path]) -> Iterator[dict[str, Any]]:
+def extract_files(
+    paths: list[Path],
+    *,
+    include_extensions: frozenset[str] | None = None,
+    skip_unsupported: bool = False,
+) -> Iterator[dict[str, Any]]:
     """Yield normalized records from every supported file under ``paths``.
 
     Each entry is either a single file or a directory walked recursively.
     Unknown / unsupported extensions inside a walk are skipped silently
     (most directories have junk) — but a file explicitly named on the
     command line with an unsupported extension raises.
+
+    ``include_extensions`` restricts the walk to a subset of
+    ``SUPPORTED_EXTENSIONS``. Useful when a source tree is dominated by
+    one extension you don't care about (e.g. a third-party Obsidian
+    vault syncing 100k ``.md`` files into iCloud Drive). Pass extensions
+    with leading dots, lowercase, e.g. ``frozenset({".pdf", ".docx"})``.
+    Any extension passed here that isn't in ``SUPPORTED_EXTENSIONS`` is
+    rejected — this is a filter, not a way to add new format support.
+
+    ``skip_unsupported=True`` turns the ``.doc`` halt into a stderr
+    warning + skip. Default ``False`` preserves the fail-loud behavior
+    documented in source-adapters.md; set ``True`` only when you've
+    decided to accept the loss (e.g. a one-shot historical archive run
+    where you'd rather get most of the files than convert 100 .doc
+    files first).
     """
+    if include_extensions is not None:
+        bad = include_extensions - SUPPORTED_EXTENSIONS
+        if bad:
+            raise AdapterError(
+                f"--include-extensions includes unsupported entries: {sorted(bad)}. "
+                f"Allowed: {sorted(SUPPORTED_EXTENSIONS)}"
+            )
+        active_extensions = include_extensions
+    else:
+        active_extensions = SUPPORTED_EXTENSIONS
+
     for entry in paths:
         entry = Path(entry)
         if entry.is_dir():
@@ -49,19 +81,31 @@ def extract_files(paths: list[Path]) -> Iterator[dict[str, Any]]:
                     continue
                 ext = file.suffix.lower()
                 if ext in UNSUPPORTED_EXTENSIONS:
+                    if skip_unsupported:
+                        print(
+                            f"warning: {file}: legacy .doc skipped (--skip-unsupported)",
+                            file=sys.stderr,
+                        )
+                        continue
                     raise AdapterError(
                         f"{file}: legacy .doc is not supported. "
                         f"Convert to .docx or .pdf and re-run."
                     )
-                if ext in SUPPORTED_EXTENSIONS:
+                if ext in active_extensions:
                     yield _file_to_record(file)
         elif entry.is_file():
             ext = entry.suffix.lower()
             if ext in UNSUPPORTED_EXTENSIONS:
+                if skip_unsupported:
+                    print(
+                        f"warning: {entry}: legacy .doc skipped (--skip-unsupported)",
+                        file=sys.stderr,
+                    )
+                    continue
                 raise AdapterError(
                     f"{entry}: legacy .doc is not supported. Convert to .docx or .pdf and re-run."
                 )
-            if ext not in SUPPORTED_EXTENSIONS:
+            if ext not in active_extensions:
                 raise AdapterError(f"{entry}: unsupported extension {ext!r}")
             yield _file_to_record(entry)
         else:

@@ -233,3 +233,68 @@ def test_idempotent_on_same_input(tmp_path: Path) -> None:
 def test_missing_path_halts(tmp_path: Path) -> None:
     with pytest.raises(AdapterError, match="Not a file or directory"):
         list(extract_files([tmp_path / "does-not-exist"]))
+
+
+# ---------------------------------------------------------------------------
+# include_extensions filter
+# ---------------------------------------------------------------------------
+
+
+def test_include_extensions_restricts_walk(tmp_path: Path) -> None:
+    """When include_extensions is set, only matching files are processed."""
+    (tmp_path / "a.txt").write_text("alpha")
+    (tmp_path / "b.md").write_text("# beta")
+    (tmp_path / "c.txt").write_text("gamma")
+    records = list(extract_files([tmp_path], include_extensions=frozenset({".txt"})))
+    formats = sorted(r["metadata"]["format"] for r in records)
+    assert formats == ["txt", "txt"]  # .md silently skipped under the filter
+
+
+def test_include_extensions_rejects_unsupported_filter_value(tmp_path: Path) -> None:
+    """The filter is a subset of SUPPORTED_EXTENSIONS, not a way to add formats."""
+    with pytest.raises(AdapterError, match="unsupported entries"):
+        list(extract_files([tmp_path], include_extensions=frozenset({".log"})))
+
+
+def test_include_extensions_default_none_keeps_full_set(tmp_path: Path) -> None:
+    (tmp_path / "a.txt").write_text("alpha")
+    (tmp_path / "b.md").write_text("# beta")
+    records = list(extract_files([tmp_path], include_extensions=None))
+    formats = sorted(r["metadata"]["format"] for r in records)
+    assert formats == ["md", "txt"]
+
+
+# ---------------------------------------------------------------------------
+# skip_unsupported (legacy .doc handling)
+# ---------------------------------------------------------------------------
+
+
+def test_skip_unsupported_warns_and_skips_dot_doc_in_walk(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "a.txt").write_text("alpha")
+    (tmp_path / "legacy.doc").write_bytes(b"legacy")
+    records = list(extract_files([tmp_path], skip_unsupported=True))
+    formats = sorted(r["metadata"]["format"] for r in records)
+    assert formats == ["txt"]  # .doc was skipped, not halted
+    captured = capsys.readouterr()
+    assert ".doc skipped" in captured.err
+
+
+def test_skip_unsupported_warns_and_skips_dot_doc_explicit_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    p = tmp_path / "legacy.doc"
+    p.write_bytes(b"legacy")
+    records = list(extract_files([p], skip_unsupported=True))
+    assert records == []
+    captured = capsys.readouterr()
+    assert ".doc skipped" in captured.err
+
+
+def test_skip_unsupported_default_still_halts(tmp_path: Path) -> None:
+    """The default fail-loud behavior is unchanged when the flag isn't set."""
+    p = tmp_path / "legacy.doc"
+    p.write_bytes(b"legacy")
+    with pytest.raises(AdapterError, match="Convert to .docx or .pdf"):
+        list(extract_files([p]))
