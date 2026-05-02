@@ -97,6 +97,24 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
+    # Validate every --exclude-dir actually exists on disk. A typo or a
+    # path mangled by shell-paste (embedded newline, double space, etc.)
+    # would otherwise just silently match nothing — which lets the user
+    # think they're excluding something while the run still touches it.
+    bad_excludes = []
+    for d in args.exclude_dir or []:
+        if not Path(d).expanduser().exists():
+            bad_excludes.append(d)
+    if bad_excludes:
+        print(
+            "error: --exclude-dir paths do not exist on disk. Check for typos "
+            "or shell-paste mangling (embedded newlines, double spaces):",
+            file=sys.stderr,
+        )
+        for d in bad_excludes:
+            print(f"  {d!r}", file=sys.stderr)
+        return 2
+
     out_dir = args.out_dir if args.out_dir else cfg.raw_staging_dir / "local-files"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_file = out_dir / "events.jsonl"
