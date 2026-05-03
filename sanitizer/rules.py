@@ -42,9 +42,29 @@ RULES: list[Rule] = [
         replacement="[REDACTED_PRIVATE_KEY]",
     ),
     Rule(
+        name="certificate_block",
+        # PEM-encoded X.509 certificates surface in dev exports / .pem files
+        # / config dumps. Body is base64 with potential identifying metadata
+        # (CN, serial). Strip the whole envelope.
+        pattern=re.compile(
+            r"-----BEGIN [A-Z ]*CERTIFICATE-----[\s\S]*?-----END [A-Z ]*CERTIFICATE-----"
+        ),
+        replacement="[REDACTED_CERTIFICATE]",
+    ),
+    Rule(
         name="jwt",
         pattern=re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"),
         replacement="[REDACTED_TOKEN]",
+    ),
+    Rule(
+        name="apple_id_license_key",
+        # Apple/game-style license keys: prefix block + 4+ hyphen-separated
+        # alphanumeric blocks of 4+ chars each, all uppercase + digits.
+        # Examples: A3-YZNB6S-R9G3NJ-547SC-9AGZT-3C82N-JQ3N2,
+        # A3-JWGPRG-YBAYNC-EHWHW-6V7SR-6ZC7N-D5VPR. Distinct from recovery
+        # codes (which are comma-separated) and AWS keys (specific prefix).
+        pattern=re.compile(r"\b[A-Z0-9]{2,}(?:-[A-Z0-9]{4,}){3,}\b"),
+        replacement="[REDACTED_API_KEY]",
     ),
     # --- Links + URLs -----------------------------------------------------
     # URL handling runs before everything else that could chew on URL
@@ -156,8 +176,43 @@ RULES: list[Rule] = [
     # --- financial -----------------------------------------------------------
     Rule(
         name="ssn",
-        pattern=re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
+        # Allow optional whitespace around the hyphens — OCR'd documents
+        # commonly produce "148 - 56 - 1678" instead of "148-56-1678".
+        pattern=re.compile(r"(?<!\d)\d{3}\s*-\s*\d{2}\s*-\s*\d{4}(?!\d)"),
         replacement="[REDACTED_SSN]",
+    ),
+    Rule(
+        name="ssn_spaced_digits",
+        # OCR can produce "1 4 8 - 5 6 - 1 6 7 8" — every digit separated
+        # by 1-3 chars of whitespace, dot, or dash. Exactly 9 digits.
+        #
+        # The lookbehind ``(?<!\d[\s.\-])`` ensures we don't match the
+        # tail of a longer OCR-spaced run: for a 10-digit phone like
+        # "5 5 5 - 0 1 2 3 - 4 5 6", positions 2+ would otherwise match a
+        # 9-digit subsequence. The trailing ``(?![\s.\-]{1,3}\d)`` covers
+        # the symmetric case (digit sequence continues to the right).
+        # Result: only complete 9-digit OCR-spaced runs match here;
+        # 10-12-digit runs fall through to _PHONE_RE in pipeline.py.
+        pattern=re.compile(
+            r"(?<!\d[\s.\-])(?<![\d.])"
+            r"\d(?:[\s.\-]{1,3}\d){8}"
+            r"(?![\s.\-]{1,3}\d)(?![\d.])",
+        ),
+        replacement="[REDACTED_SSN]",
+    ),
+    # NOTE: OCR-spaced phones ("5 1 3 - 6 0 8 - 1 4 4 9") are intentionally
+    # NOT handled in this rules layer. Phones must be pseudonymized via the
+    # mapping (so the same number is [PHONE_1] every time it appears, not
+    # [REDACTED_PHONE] uniformly), and pseudonymization happens in
+    # pipeline.py's _sub_phones. _PHONE_RE there has been extended to
+    # match the spaced-digit variant.
+    Rule(
+        name="credit_card_masked_last_four",
+        # Patterns like "Credit Card ****7255" or "card ending ****1234".
+        # Existing labeled_account / labeled_card rules expect a full
+        # number; this catches the masked-last-four OCR/print form.
+        pattern=re.compile(r"(?im)\b(?:credit\s+card|card|acct|account)\s+\*{2,}\s*\d{4}\b"),
+        replacement="[REDACTED_CARD]",
     ),
     Rule(
         name="credit_card_spaced",
@@ -262,9 +317,12 @@ RULES: list[Rule] = [
     # group allows alphanumerics, dashes, and slash-separated continuations.
     Rule(
         name="labeled_reference",
+        # Trailing \b after the label alternation so e.g. "Conf" doesn't
+        # match inside "Confirmed". Without it, "Card ****1234 confirmed"
+        # would have "conf" matched as a label and "irmed" as the value.
         pattern=re.compile(
             r"(?im)(?P<label>\b(?:Ref(?:erence)?|Conf(?:irmation)?|Order|Tracking|"
-            r"Transaction|Trans|Receipt|Auth(?:orization)?|Invoice|Ticket)"
+            r"Transaction|Trans|Receipt|Auth(?:orization)?|Invoice|Ticket)\b"
             r"\s*#?\s*(?:Number|No\.?|#)?)"
             r"(?P<sep>\s*[:#=]?\s*)"
             r"(?P<value>[A-Z0-9][A-Z0-9-]{4,}(?:\s*/\s*[A-Z0-9][A-Z0-9-]+)?)\b"
@@ -286,7 +344,7 @@ RULES: list[Rule] = [
             # number and the suffix; 8 is safe headroom.
             r"(?P<street>\d+\s+(?:[\w.]+\s+){1,8}"
             r"(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Way|Lane|Ln|"
-            r"Terrace|Ter|Parkway|Pkwy|Court|Ct|Place|Pl)"
+            r"Terrace|Ter|Parkway|Pkwy|Court|Ct|Place|Pl|Highway|Hwy|HWY)"
             r"(?:[,.]?\s*(?:Suite|Apt|Unit|Ste|#)\s*\w+)?)"
         ),
         replacement=r"\g<prefix>[HOME_ADDRESS]",

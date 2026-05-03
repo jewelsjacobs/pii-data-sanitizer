@@ -52,12 +52,21 @@ _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 # between groups so audit-found shapes like ``(732)-930- 0987`` (extra
 # hyphen plus space) match — the previous single-char allowance missed them.
 _PHONE_RE = re.compile(
+    # Branch 1: standard formats — paren'd area code, dotted, dashed, spaced.
     r"(?<!\d)"
     r"(?:\+\d{1,3}[-. ]*)?"
     r"(?:\(\d{3}\)[-. ]*|\d{3}[-. ]+)"
     r"\d{3}[-. ]*\d{4}"
     r"(?!\d)"
+    # Branch 2: bare 10-15 digits (E.164, no separators).
     r"|(?<!\d)\+?\d{10,15}(?!\d)"
+    # Branch 3: OCR-spaced — every digit separated by mandatory whitespace
+    # and/or hyphen. 10-12 digits total. Captures shapes like
+    # "5 1 3 - 6 0 8 - 1 4 4 9" or "1 1 5 5 4 8 1 1 7 9 7" that the
+    # standard formats miss. SelfIdentity.normalize_phone strips
+    # non-digits before mapping, so the spaced and contiguous forms
+    # collapse to the same key (and same [PHONE_N] pseudonym).
+    r"|(?<!\d)\d(?:[\s\-]{1,3}\d){9,11}(?!\d)"
 )
 
 # Generic street-address detector (non-home). Requires a leading number, at
@@ -71,7 +80,7 @@ _PHONE_RE = re.compile(
 _ADDRESS_RE = re.compile(
     r"\b\d+\s+(?:[\w.]+\s+){1,8}"
     r"(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Way|"
-    r"Lane|Ln|Terrace|Ter|Parkway|Pkwy|Court|Ct|Place|Pl)"
+    r"Lane|Ln|Terrace|Ter|Parkway|Pkwy|Court|Ct|Place|Pl|Highway|Hwy|HWY)"
     r"(?:[,.]?\s*(?:Suite|Apt|Unit|Ste|#)\s*\w+)?"
     r"(?:\s+[NSEW]\b)?",
     re.IGNORECASE,
