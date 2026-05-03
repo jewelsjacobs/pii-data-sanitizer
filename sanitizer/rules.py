@@ -280,7 +280,11 @@ RULES: list[Rule] = [
         name="home_address",
         pattern=re.compile(
             r"(?im)(?P<prefix>\b(?:my\s+)?home\s+address\s*:?\s*)"
-            r"(?P<street>\d+\s+(?:[\w.]+\s+)+"
+            # Bounded {1,8} on the inner word-and-space repetition so this
+            # rule can't ReDoS-explode on a wall of word-shaped text without
+            # a street suffix. Real addresses are 2-5 words between the
+            # number and the suffix; 8 is safe headroom.
+            r"(?P<street>\d+\s+(?:[\w.]+\s+){1,8}"
             r"(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Way|Lane|Ln|"
             r"Terrace|Ter|Parkway|Pkwy|Court|Ct|Place|Pl)"
             r"(?:[,.]?\s*(?:Suite|Apt|Unit|Ste|#)\s*\w+)?)"

@@ -63,8 +63,13 @@ _PHONE_RE = re.compile(
 # Generic street-address detector (non-home). Requires a leading number, at
 # least one word component, and a known street suffix; optional unit/suite
 # and optional N/S/E/W direction marker.
+#
+# Bounded {1,8} on the inner word-and-space repetition so this regex can't
+# ReDoS-explode on a wall of word-shaped text without a street suffix.
+# Real addresses are 2-5 words between the number and the suffix; 8 is safe
+# headroom and bounds the engine's backtracking exploration.
 _ADDRESS_RE = re.compile(
-    r"\b\d+\s+(?:[\w.]+\s+)+"
+    r"\b\d+\s+(?:[\w.]+\s+){1,8}"
     r"(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Way|"
     r"Lane|Ln|Terrace|Ter|Parkway|Pkwy|Court|Ct|Place|Pl)"
     r"(?:[,.]?\s*(?:Suite|Apt|Unit|Ste|#)\s*\w+)?"
