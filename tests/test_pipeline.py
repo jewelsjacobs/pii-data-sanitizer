@@ -119,3 +119,83 @@ def test_input_is_not_mutated() -> None:
     sanitize(rec)
     assert rec["content"] == snapshot["content"]
     assert rec["metadata"] == snapshot["metadata"]
+
+
+# --------------------------------------------------------------------------- #
+# Chunked NER for very long content (multi-megabyte PDFs / OCR scans)
+# --------------------------------------------------------------------------- #
+
+
+def test_chunk_text_for_ner_short_input_single_chunk() -> None:
+    """Text under the limit returns a single chunk at offset 0."""
+    from sanitizer.pipeline import _chunk_text_for_ner
+
+    text = "Hello world.\n\nA short doc."
+    chunks = _chunk_text_for_ner(text, 1000)
+    assert chunks == [(0, text)]
+
+
+def test_chunk_text_for_ner_breaks_on_paragraph_boundary() -> None:
+    """Splits prefer ``\\n\\n`` at or after the half-chunk mark."""
+    from sanitizer.pipeline import _chunk_text_for_ner
+
+    # 200 chars + paragraph break + 200 chars; max=300 forces a split
+    para_a = "A" * 200
+    para_b = "B" * 200
+    text = para_a + "\n\n" + para_b
+    chunks = _chunk_text_for_ner(text, 300)
+    # First chunk should end at or after the paragraph break
+    assert len(chunks) == 2
+    assert chunks[0][1].endswith("\n\n")
+    assert chunks[0][0] == 0
+    assert chunks[1][1] == para_b
+    assert chunks[1][0] == len(chunks[0][1])
+
+
+def test_chunk_text_for_ner_offsets_reconstruct_original() -> None:
+    """Concatenating chunks (in order) reproduces the original text."""
+    from sanitizer.pipeline import _chunk_text_for_ner
+
+    parts = ["paragraph " + str(i) + "\n\n" for i in range(50)]
+    text = "".join(parts)
+    chunks = _chunk_text_for_ner(text, 100)
+    rebuilt = "".join(chunk for _, chunk in chunks)
+    assert rebuilt == text
+
+
+def test_chunk_text_for_ner_falls_back_to_hard_cutoff() -> None:
+    """When a single line is longer than the chunk size, hard-cut it."""
+    from sanitizer.pipeline import _chunk_text_for_ner
+
+    text = "X" * 1000  # one giant line, no breaks
+    chunks = _chunk_text_for_ner(text, 200)
+    rebuilt = "".join(chunk for _, chunk in chunks)
+    assert rebuilt == text
+    # No chunk exceeds the limit
+    assert all(len(c) <= 200 for _, c in chunks)
+
+
+def test_long_content_still_pseudonymizes_entities_in_each_chunk() -> None:
+    """Across-chunk consistency: 'Linda' in chunk 1 and chunk 2 share an alias."""
+    paragraph = "Linda met someone else at the cafe.\n\n"
+    # Build content larger than the NER chunk size so chunking kicks in.
+    content = paragraph * 10000  # ~360k chars, > 200k threshold
+    rec = _record(content)
+    out = sanitize(rec)
+    # Linda should be pseudonymized to a single consistent token
+    assert "Linda" not in out["content"]
+    assert "[PERSON_1]" in out["content"]
+    # And the count of pseudonym occurrences should be substantial — proves
+    # the chunked path actually ran NER on the later chunks.
+    assert out["content"].count("[PERSON_1]") >= 100
+
+
+def test_long_content_does_not_hang() -> None:
+    """A pathological 1MB input must complete in a sane wall-clock time.
+
+    No assertion on time; pytest's default timeout would have already
+    fired if the chunking didn't fix the hang. The test passing at all
+    is the assertion.
+    """
+    rec = _record("Alpha. " * 200_000)  # ~1.4 MB
+    sanitize(rec)

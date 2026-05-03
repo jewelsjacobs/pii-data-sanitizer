@@ -175,27 +175,81 @@ def _sub_addresses(text: str, mapping: Mapping) -> str:
     return _ADDRESS_RE.sub(repl, text)
 
 
+# spaCy NER on a single multi-megabyte text (large PDF, OCR'd scan,
+# code dump) burns hours of CPU on one record. Chunk at paragraph
+# boundaries when content is larger than this; each chunk is its own
+# spaCy pass and entity offsets are stitched back into the original
+# text. The shared mapping ensures consistent pseudonyms across chunks.
+_NER_CHUNK_SIZE = 200_000
+
+
 def _sub_ner(text: str, mapping: Mapping, keep: KeepList) -> str:
-    """Run NER and replace recognized spans with mapped pseudonyms."""
+    """Run NER and replace recognized spans with mapped pseudonyms.
+
+    For text under ``_NER_CHUNK_SIZE`` characters this is a single
+    spaCy pass, identical to the original behavior. For longer texts
+    (multi-megabyte PDFs or OCR'd scans) the text is chunked at
+    paragraph boundaries; each chunk is NER'd separately and their
+    spans are merged with offsets adjusted back to the original text.
+
+    Edge case: an entity that straddles a chunk boundary won't be
+    detected by either chunk (spaCy sees only one half). Accepted
+    cost — the alternative is letting one pathological 50MB record
+    hang the pipeline indefinitely.
+    """
     if not text:
         return text
-    from sanitizer.ner import analyze
 
-    spans = analyze(text)
-    if not spans:
+    if len(text) <= _NER_CHUNK_SIZE:
+        resolved = _resolve_ner_spans(text, 0, text, mapping, keep)
+    else:
+        resolved = []
+        for chunk_offset, chunk_text in _chunk_text_for_ner(text, _NER_CHUNK_SIZE):
+            resolved.extend(_resolve_ner_spans(chunk_text, chunk_offset, text, mapping, keep))
+
+    if not resolved:
         return text
 
-    # Resolve each span to a pseudonym (or KEEP). Assign in forward order
-    # so [PERSON_1] really is the first person encountered.
+    # Apply in reverse order so earlier offsets stay valid.
+    resolved.sort(key=lambda s: s[0], reverse=True)
+    chars = list(text)
+    for start, end, pseudonym in resolved:
+        chars[start:end] = pseudonym
+    return "".join(chars)
+
+
+def _resolve_ner_spans(
+    chunk_text: str,
+    chunk_offset: int,
+    full_text: str,
+    mapping: Mapping,
+    keep: KeepList,
+) -> list[tuple[int, int, str]]:
+    """Run NER on ``chunk_text`` and resolve each span to a pseudonym.
+
+    Returned offsets are absolute (relative to ``full_text``), shifted
+    by ``chunk_offset``. The bracket-token guard checks the *full
+    text* so a span at chunk-start whose surrounding ``[…]`` brackets
+    were split across chunks still gets correctly suppressed.
+    """
+    from sanitizer.ner import analyze
+
+    spans = analyze(chunk_text)
+    if not spans:
+        return []
+
     resolved: list[tuple[int, int, str]] = []
     for span in spans:
         surface = span.text
+        abs_start = chunk_offset + span.start
+        abs_end = chunk_offset + span.end
         # Ignore spans that sit inside our own redaction tokens (`[MY_PHONE]`,
         # `[HOME_ADDRESS]`, etc.). spaCy sometimes tags the inner text as ORG.
         if (
-            span.start > 0
-            and span.end < len(text)
-            and (text[span.start - 1] == "[" and text[span.end] == "]")
+            abs_start > 0
+            and abs_end < len(full_text)
+            and full_text[abs_start - 1] == "["
+            and full_text[abs_end] == "]"
         ):
             continue
         # Name / GPE keep-list applies regardless of entity type. spaCy routinely
@@ -224,14 +278,37 @@ def _sub_ner(text: str, mapping: Mapping, keep: KeepList) -> str:
                 pseudonym = _get_or_assign_with_coref(mapping, "LOCATION", surface)
         else:
             continue
-        resolved.append((span.start, span.end, pseudonym))
+        resolved.append((abs_start, abs_end, pseudonym))
+    return resolved
 
-    # Apply in reverse order so offsets stay valid.
-    resolved.sort(key=lambda s: s[0], reverse=True)
-    chars = list(text)
-    for start, end, pseudonym in resolved:
-        chars[start:end] = pseudonym
-    return "".join(chars)
+
+def _chunk_text_for_ner(text: str, max_chunk_size: int) -> list[tuple[int, str]]:
+    """Split ``text`` into chunks of at most ``max_chunk_size`` characters.
+
+    Prefers paragraph breaks (``\\n\\n``) at or after the half-chunk mark;
+    falls back to single newlines; falls back to hard cutoffs only if a
+    single line exceeds the limit. Returns ``(offset, chunk)`` pairs
+    where ``offset`` is the start position in ``text``.
+    """
+    chunks: list[tuple[int, str]] = []
+    pos = 0
+    n = len(text)
+    half = max_chunk_size // 2
+    while pos < n:
+        end = min(pos + max_chunk_size, n)
+        if end >= n:
+            chunks.append((pos, text[pos:]))
+            return chunks
+        # Prefer paragraph break in the second half of the window.
+        para_break = text.rfind("\n\n", pos + half, end)
+        if para_break != -1:
+            chunk_end = para_break + 2
+        else:
+            line_break = text.rfind("\n", pos + half, end)
+            chunk_end = line_break + 1 if line_break != -1 else end
+        chunks.append((pos, text[pos:chunk_end]))
+        pos = chunk_end
+    return chunks
 
 
 def _find_cross_kind_coref(mapping: Mapping, kind: str, key: str) -> str | None:
