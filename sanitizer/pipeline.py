@@ -125,12 +125,47 @@ def sanitize(
     return out
 
 
+# Several regex patterns in this pipeline (notably ``_ADDRESS_RE`` and a
+# few rules in ``apply_rules``) use nested quantifiers like
+# ``(?:[\w.]+\s+)+`` that can ReDoS-explode on multi-megabyte inputs —
+# the regex engine explores exponential prefixes before failing to
+# match. Combined with spaCy's NER pass, a single 5MB OCR'd PDF could
+# burn hours of CPU on one record. Solution: chunk the *whole* sanitize
+# pipeline at paragraph boundaries when content is larger than this,
+# and run every step (regex + email + phone + address + NER) per chunk.
+# The shared mapping ensures consistent pseudonyms across chunks.
+_PROCESS_CHUNK_SIZE = 200_000
+
+
 def _sanitize_text(
     text: str,
     mapping: Mapping,
     identity: SelfIdentity,
     keep: KeepList,
 ) -> str:
+    if len(text) <= _PROCESS_CHUNK_SIZE:
+        return _sanitize_text_chunk(text, mapping, identity, keep)
+    return "".join(
+        _sanitize_text_chunk(chunk, mapping, identity, keep)
+        for _, chunk in _chunk_text_for_ner(text, _PROCESS_CHUNK_SIZE)
+    )
+
+
+def _sanitize_text_chunk(
+    text: str,
+    mapping: Mapping,
+    identity: SelfIdentity,
+    keep: KeepList,
+) -> str:
+    """Single-chunk pipeline: regex layer → email → phone → address → NER.
+
+    Chunk-boundary edge cases:
+    - Entities/patterns straddling a chunk boundary won't be matched by
+      either chunk (each sees only half). Accepted cost — the alternative
+      is the indefinite hang on pathological inputs.
+    - Pseudonym consistency is guaranteed because the mapping object is
+      shared by reference across chunk calls.
+    """
     text = apply_rules(text)
     text = _sub_emails(text, mapping, identity)
     text = _sub_phones(text, mapping, identity)
