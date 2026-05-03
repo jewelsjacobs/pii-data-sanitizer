@@ -142,6 +142,12 @@ def main(argv: list[str] | None = None) -> int:
 
     open_mode = "a" if incremental else "w"
 
+    # Hard content-size cap. Even with the chunked pipeline, a 50 MB OCR'd
+    # PDF takes minutes per record; for life-history purposes the signal
+    # density above the first ~MB is low. Truncate and flag so the run
+    # can't get stuck on one outlier file.
+    _MAX_CONTENT_BYTES = 2_000_000
+
     with raw_file.open() as fin, clean_file.open(open_mode) as fout:
         for line in fin:
             if not line.strip():
@@ -155,6 +161,33 @@ def main(argv: list[str] | None = None) -> int:
             if incremental and isinstance(sid, str) and sid in existing_ids:
                 skipped_dedupe += 1
                 continue
+
+            # Truncate runaway content before sanitize. Records the
+            # original length so downstream consumers know the note is
+            # incomplete.
+            content = raw_record.get("content")
+            if isinstance(content, str) and len(content) > _MAX_CONTENT_BYTES:
+                meta = raw_record.setdefault("metadata", {})
+                if isinstance(meta, dict):
+                    meta["content_truncated"] = True
+                    meta["original_content_chars"] = len(content)
+                raw_record["content"] = content[:_MAX_CONTENT_BYTES]
+                print(
+                    f"  truncated record {sid!r}: {len(content):,} → {_MAX_CONTENT_BYTES:,} chars",
+                    file=sys.stderr,
+                    flush=True,
+                )
+
+            # Per-record progress to stderr — prints the source_id of
+            # whatever sanitize is about to chew on, so if the run hangs
+            # we know exactly which record was the choke point.
+            print(
+                f"  → {records_in - skipped_window - skipped_dedupe}/{total} "
+                f"id={sid!r} len={len(raw_record.get('content') or '')}",
+                file=sys.stderr,
+                flush=True,
+            )
+
             before = _mapping_sizes(mapping)
             sanitized = sanitize(
                 raw_record,
