@@ -245,6 +245,11 @@ _BRACKETED_TOKEN_RE = re.compile(
     + r"(?:_\d+)?\]?\s*$"
 )
 
+# For the "mostly bracketed" verifier check — strip every bracketed
+# sanitizer token from an excerpt so we can measure the meaningful
+# content that remains.
+_STRIP_BRACKETED_RE = re.compile(r"\[[A-Z][A-Z0-9_]*\]")
+
 
 def _keep_list_prompt(config: AuditConfig) -> str:
     """Render the per-run keep-list as a prompt block. Returns empty
@@ -418,6 +423,22 @@ def _verify_finding(
         if stats is not None:
             stats.bracketed_token += 1
         return None
+
+    # Wider bracketed-token check: drop findings whose excerpt is
+    # *mostly* one or more sanitizer tokens with only trivial surrounding
+    # content. Real-world auditor noise: the LLM flags a span like
+    # "[ADDRESS_163] SW" or "[PERSON_5] [ORG_2] meeting" because it
+    # mistakes the surrounding context for new PII. After stripping the
+    # bracketed tokens, anything with fewer than this many alphanumeric
+    # chars is treated as noise.
+    _MEANINGFUL_CHARS_THRESHOLD = 8
+    if "[" in excerpt:
+        stripped = _STRIP_BRACKETED_RE.sub("", excerpt)
+        meaningful = sum(1 for c in stripped if c.isalnum())
+        if meaningful < _MEANINGFUL_CHARS_THRESHOLD:
+            if stats is not None:
+                stats.bracketed_token += 1
+            return None
 
     if excerpt not in haystack:
         if stats is not None:
