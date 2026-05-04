@@ -26,6 +26,15 @@ class LocalConfig:
     self_phones: frozenset[str] = field(default_factory=frozenset)
     keep_names: frozenset[str] = field(default_factory=frozenset)
     keep_gpes: frozenset[str] = field(default_factory=frozenset)
+    # Literal strings to hard-redact everywhere they appear, case-insensitively.
+    # For sensitive tokens that lack pattern context (bare last-4 digits of an
+    # SSN / bank account, a macOS username appearing in file paths, a home
+    # address number that NER won't recognize). Hard-redacted to
+    # ``[REDACTED_PERSONAL]`` regardless of surrounding text. Stored
+    # case-folded internally so both casings of "Juliajacobs" / "juliajacobs"
+    # match. Some over-redaction (a "1234" that isn't your SSN-last-4) is
+    # acceptable — much better than a real leak.
+    scrub_strings: frozenset[str] = field(default_factory=frozenset)
     mapping_path: Path = Path("mapping/mapping.json")
     raw_staging_dir: Path = Path("raw-staging")
     clean_staging_dir: Path = Path("clean-staging")
@@ -51,6 +60,7 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> LocalConfig:
         self_phones=frozenset(_normalize_phone(p) for p in data.get("self_phones", [])),
         keep_names=frozenset(data.get("keep_names", [])),
         keep_gpes=frozenset(data.get("keep_gpes", [])),
+        scrub_strings=frozenset(s.casefold() for s in data.get("scrub_strings", []) if s),
         mapping_path=Path(data.get("mapping_path", "mapping/mapping.json")),
         raw_staging_dir=Path(data.get("raw_staging_dir", "raw-staging")),
         clean_staging_dir=Path(data.get("clean_staging_dir", "clean-staging")),

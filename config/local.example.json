@@ -33,6 +33,13 @@
     "Seattle"
   ],
 
+  "_comment_scrub_strings": "Literal strings (case-insensitive) that get hard-redacted to [REDACTED_PERSONAL] everywhere they appear. Use for sensitive tokens that lack pattern context: bare last-4 of an SSN/bank account, your macOS username appearing in file paths, your home address number, kid/pet names not on the keep list, etc. Some over-redaction (a 1234 that isn't your SSN-last-4) is acceptable — better than a real leak. KEEP THIS LIST IN config/local.json (gitignored), NEVER in code.",
+  "scrub_strings": [
+    "ReplaceMacOSUsername",
+    "1234",
+    "5678"
+  ],
+
   "mapping_path": "mapping/mapping.json",
 
   "raw_staging_dir": "/Users/REPLACEME/projects/pii-data-sanitizer/raw-staging",

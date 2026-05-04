@@ -63,7 +63,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    identity = SelfIdentity(emails=cfg.self_emails, phones=cfg.self_phones)
+    identity = SelfIdentity(
+        emails=cfg.self_emails,
+        phones=cfg.self_phones,
+        scrub_strings=cfg.scrub_strings,
+    )
     keep = KeepList(names=cfg.keep_names, gpes=cfg.keep_gpes)
     mapping = Mapping.load(cfg.mapping_path)
 

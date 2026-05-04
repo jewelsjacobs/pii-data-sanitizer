@@ -199,3 +199,65 @@ def test_long_content_does_not_hang() -> None:
     """
     rec = _record("Alpha. " * 200_000)  # ~1.4 MB
     sanitize(rec)
+
+
+# --------------------------------------------------------------------------- #
+# scrub_strings (literal-string hard-redaction)
+# --------------------------------------------------------------------------- #
+
+
+def test_scrub_strings_redacts_all_occurrences() -> None:
+    """Configured strings get hard-redacted everywhere, regardless of context."""
+    identity = SelfIdentity(scrub_strings=frozenset({"juliajacobs"}))
+    rec = _record(
+        "/Users/juliajacobs/Documents/note.md and ~juliajacobs/.zshrc and JuliaJacobs again."
+    )
+    out = sanitize(rec, self_identity=identity)
+    assert "juliajacobs" not in out["content"].lower()
+    # All three occurrences (mixed casing) get the same token
+    assert out["content"].count("[REDACTED_PERSONAL]") == 3
+
+
+def test_scrub_strings_case_insensitive() -> None:
+    identity = SelfIdentity(scrub_strings=frozenset({"secret"}))
+    rec = _record("the secret was Secret which is SECRET.")
+    out = sanitize(rec, self_identity=identity)
+    assert out["content"].count("[REDACTED_PERSONAL]") == 3
+
+
+def test_scrub_strings_longest_first_match() -> None:
+    """If both 'juliajacobs' and 'julia' are configured, the longer wins."""
+    identity = SelfIdentity(scrub_strings=frozenset({"julia", "juliajacobs"}))
+    rec = _record("juliajacobs is the username, but julia is the name.")
+    out = sanitize(rec, self_identity=identity)
+    # "juliajacobs" should not be split as [REDACTED_PERSONAL]jacobs
+    assert "[REDACTED_PERSONAL]jacobs" not in out["content"]
+    assert out["content"].count("[REDACTED_PERSONAL]") == 2
+
+
+def test_scrub_strings_runs_before_other_rules() -> None:
+    """A string in scrub_strings is redacted before NER could pseudonymize it."""
+    identity = SelfIdentity(scrub_strings=frozenset({"Linda"}))
+    rec = _record("Linda met John at the cafe.")
+    out = sanitize(rec, self_identity=identity)
+    # Linda should be [REDACTED_PERSONAL], not [PERSON_N] (from NER).
+    assert "Linda" not in out["content"]
+    assert "[REDACTED_PERSONAL]" in out["content"]
+
+
+def test_scrub_strings_empty_set_is_passthrough() -> None:
+    """Default empty scrub_strings doesn't change behavior."""
+    identity = SelfIdentity()
+    rec = _record("nothing to scrub here.")
+    out = sanitize(rec, self_identity=identity)
+    assert out["content"] == "nothing to scrub here."
+
+
+def test_scrub_strings_substring_matches_too() -> None:
+    """A short scrub string matches inside larger words. Documented trade-off
+    to avoid leaking digits-as-substring-of-other-numbers cases."""
+    identity = SelfIdentity(scrub_strings=frozenset({"5421"}))
+    rec = _record("ZIP 95421 contains my home number 5421.")
+    out = sanitize(rec, self_identity=identity)
+    # Both "5421" instances (the standalone and the suffix of 95421) get redacted
+    assert out["content"].count("[REDACTED_PERSONAL]") == 2

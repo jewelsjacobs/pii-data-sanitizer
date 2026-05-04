@@ -93,6 +93,10 @@ class SelfIdentity:
 
     emails: frozenset[str] = field(default_factory=frozenset)
     phones: frozenset[str] = field(default_factory=frozenset)
+    # Literal strings to hard-redact everywhere they appear (case-insensitive)
+    # — bare last-4 digits, the user's macOS username in file paths, etc.
+    # Strings should be passed in case-folded already.
+    scrub_strings: frozenset[str] = field(default_factory=frozenset)
 
     @staticmethod
     def normalize_email(raw: str) -> str:
@@ -171,7 +175,12 @@ def _sanitize_text_chunk(
     identity: SelfIdentity,
     keep: KeepList,
 ) -> str:
-    """Single-chunk pipeline: regex layer → email → phone → address → NER.
+    """Single-chunk pipeline: scrub_strings → regex layer → email → phone → address → NER.
+
+    scrub_strings runs FIRST so that user-configured literal-string redactions
+    happen before the regex/NER layers — the most specific (and most
+    sensitive) values get redacted unconditionally before any other rule
+    can interfere with them.
 
     Chunk-boundary edge cases:
     - Entities/patterns straddling a chunk boundary won't be matched by
@@ -180,12 +189,46 @@ def _sanitize_text_chunk(
     - Pseudonym consistency is guaranteed because the mapping object is
       shared by reference across chunk calls.
     """
+    if identity.scrub_strings:
+        text = _scrub_personal_strings(text, identity.scrub_strings)
     text = apply_rules(text)
     text = _sub_emails(text, mapping, identity)
     text = _sub_phones(text, mapping, identity)
     text = _sub_addresses(text, mapping)
     text = _sub_ner(text, mapping, keep)
     return text
+
+
+def _scrub_personal_strings(text: str, scrub_strings: frozenset[str]) -> str:
+    """Hard-redact every case-insensitive occurrence of any string in
+    ``scrub_strings`` to ``[REDACTED_PERSONAL]``.
+
+    Strings are sorted longest-first so that overlapping entries (e.g.
+    "juliajacobs" vs "julia") match the most specific form first. The
+    match is whole-string (no regex semantics) for predictability —
+    if you need pattern-based scrubbing, use the rules layer instead.
+
+    Defensively casefolds inputs so callers passing mixed casings
+    ("Linda" vs "linda") get consistent results.
+    """
+    if not text or not scrub_strings:
+        return text
+    # Longest-first sort + defensive casefold. Non-empty after dedup
+    # because empty strings were filtered at config load.
+    folded_strings = sorted(
+        {s.casefold() for s in scrub_strings if s},
+        key=len,
+        reverse=True,
+    )
+    if not folded_strings:
+        return text
+    # Build a single alternation regex with re.IGNORECASE so the
+    # original text's casing is matched without offset gymnastics.
+    pattern = re.compile(
+        "|".join(re.escape(s) for s in folded_strings),
+        re.IGNORECASE,
+    )
+    return pattern.sub("[REDACTED_PERSONAL]", text)
 
 
 def _sub_emails(text: str, mapping: Mapping, identity: SelfIdentity) -> str:
