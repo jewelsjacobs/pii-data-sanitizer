@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import random
+import re
 import sys
 from pathlib import Path
 
@@ -34,7 +35,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--needle",
         required=True,
-        help="The literal string to search for (e.g. a known SSN last-4, a home number).",
+        help="The literal string (or regex with --regex) to search for.",
+    )
+    parser.add_argument(
+        "--regex",
+        action="store_true",
+        help="Treat --needle as a regular expression instead of a literal string.",
     )
     parser.add_argument(
         "--file",
@@ -70,18 +76,31 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     matches: list[str] = []
-    needle = args.needle
-    with args.file.open() as f:
-        for line in f:
-            idx = 0
-            while True:
-                idx = line.find(needle, idx)
-                if idx < 0:
-                    break
-                start = max(0, idx - args.window)
-                end = min(len(line), idx + len(needle) + args.window)
-                matches.append(line[start:end])
-                idx += len(needle)
+    if args.regex:
+        try:
+            pattern = re.compile(args.needle)
+        except re.error as exc:
+            print(f"error: invalid regex {args.needle!r}: {exc}", file=sys.stderr)
+            return 2
+        with args.file.open() as f:
+            for line in f:
+                for m in pattern.finditer(line):
+                    start = max(0, m.start() - args.window)
+                    end = min(len(line), m.end() + args.window)
+                    matches.append(line[start:end])
+    else:
+        needle = args.needle
+        with args.file.open() as f:
+            for line in f:
+                idx = 0
+                while True:
+                    idx = line.find(needle, idx)
+                    if idx < 0:
+                        break
+                    start = max(0, idx - args.window)
+                    end = min(len(line), idx + len(needle) + args.window)
+                    matches.append(line[start:end])
+                    idx += len(needle)
 
     rng = random.Random(args.seed)
     rng.shuffle(matches)
