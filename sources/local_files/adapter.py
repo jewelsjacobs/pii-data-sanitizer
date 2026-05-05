@@ -41,6 +41,7 @@ def extract_files(
     skip_unsupported: bool = False,
     continue_on_error: bool = False,
     exclude_dirs: list[Path] | None = None,
+    exclude_dir_names: list[str] | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Yield normalized records from every supported file under ``paths``.
 
@@ -78,6 +79,12 @@ def extract_files(
     libraries, third-party Obsidian vaults syncing into iCloud,
     corrupted Dropbox-to-iCloud migration dumps) without having to
     enumerate all the *good* dirs.
+
+    ``exclude_dir_names`` skips any file under a directory whose
+    *name* matches one of the given strings, anywhere in the tree.
+    Use for dev-junk that recurs throughout the source tree
+    (``node_modules``, ``.git``, ``__pycache__``, ``.venv``).
+    Distinct from ``exclude_dirs`` which takes absolute paths.
     """
     if include_extensions is not None:
         bad = include_extensions - SUPPORTED_EXTENSIONS
@@ -91,6 +98,7 @@ def extract_files(
         active_extensions = SUPPORTED_EXTENSIONS
 
     excluded = [Path(d).expanduser().resolve() for d in (exclude_dirs or [])]
+    excluded_names = frozenset(exclude_dir_names or [])
 
     files_seen = 0
     files_extracted = 0
@@ -113,6 +121,10 @@ def extract_files(
                 if not file.is_file():
                     continue
                 if _is_under_any(file, excluded):
+                    continue
+                if excluded_names and _has_excluded_ancestor_name(
+                    file, entry, excluded_names
+                ):
                     continue
                 ext = file.suffix.lower()
                 if ext in UNSUPPORTED_EXTENSIONS:
@@ -184,6 +196,32 @@ def _is_under_any(path: Path, dirs: list[Path]) -> bool:
             return True
         except ValueError:
             continue
+    return False
+
+
+def _has_excluded_ancestor_name(
+    file: Path, root: Path, excluded_names: frozenset[str]
+) -> bool:
+    """True iff any ancestor directory of ``file`` (between ``root`` and
+    the file itself) has a name in ``excluded_names``.
+
+    Used for name-based exclusion of recurring dev-junk subtrees:
+    ``node_modules`` appears in 100+ places under a typical projects
+    directory; a name-based check is the only practical way to skip
+    them all without enumerating every absolute path.
+    """
+    if not excluded_names:
+        return False
+    try:
+        rel = file.relative_to(root)
+    except ValueError:
+        return False
+    # rel.parts excludes ``root`` and includes the file's own basename
+    # at the end. We only care about directory components, so we slice
+    # off the last entry.
+    for part in rel.parts[:-1]:
+        if part in excluded_names:
+            return True
     return False
 
 

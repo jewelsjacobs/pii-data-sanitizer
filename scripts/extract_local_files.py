@@ -85,6 +85,17 @@ def main(argv: list[str] | None = None) -> int:
             "having to enumerate the dirs you do want."
         ),
     )
+    parser.add_argument(
+        "--exclude-dir-name",
+        action="append",
+        default=[],
+        help=(
+            "Skip any file whose path includes a directory matching this name "
+            "anywhere in the tree (e.g. 'node_modules', '.git', '__pycache__'). "
+            "May be passed multiple times. Distinct from --exclude-dir which "
+            "takes a single absolute path."
+        ),
+    )
     args = parser.parse_args(argv)
 
     cfg: LocalConfig = load_config(args.config)
@@ -127,6 +138,7 @@ def main(argv: list[str] | None = None) -> int:
             skip_unsupported=args.skip_unsupported,
             continue_on_error=args.continue_on_error,
             exclude_dirs=args.exclude_dir,
+            exclude_dir_names=args.exclude_dir_name,
         ):
             fout.write(json.dumps(record) + "\n")
             count += 1

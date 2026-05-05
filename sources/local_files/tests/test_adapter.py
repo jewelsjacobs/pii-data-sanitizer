@@ -430,3 +430,68 @@ def test_progress_summary_emitted_on_walk_completion(
     assert "total:" in captured.err
     assert "2 files visited" in captured.err
     assert "2 extracted" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# exclude_dir_names — name-based exclusion of recurring junk dirs
+# ---------------------------------------------------------------------------
+
+
+def test_exclude_dir_names_skips_top_level_match(tmp_path: Path) -> None:
+    """A directory whose name matches an entry in exclude_dir_names is skipped."""
+    (tmp_path / "good.txt").write_text("kept")
+    nm = tmp_path / "node_modules"
+    nm.mkdir()
+    (nm / "junk.txt").write_text("skip me")
+    records = list(extract_files([tmp_path], exclude_dir_names=["node_modules"]))
+    contents = [r["content"] for r in records]
+    assert contents == ["kept"]
+
+
+def test_exclude_dir_names_skips_deeply_nested_match(tmp_path: Path) -> None:
+    """Excluded dir-names match anywhere in the tree, not just at top level."""
+    (tmp_path / "good.txt").write_text("kept")
+    deep = tmp_path / "project" / "subproject" / "node_modules" / "lodash"
+    deep.mkdir(parents=True)
+    (deep / "README.txt").write_text("npm package readme - skip")
+    records = list(extract_files([tmp_path], exclude_dir_names=["node_modules"]))
+    contents = [r["content"] for r in records]
+    assert contents == ["kept"]
+
+
+def test_exclude_dir_names_multiple_names_combine(tmp_path: Path) -> None:
+    """All listed names are excluded simultaneously."""
+    (tmp_path / "good.txt").write_text("kept")
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "a.txt").write_text("npm")
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "b.txt").write_text("git")
+    (tmp_path / "__pycache__").mkdir()
+    (tmp_path / "__pycache__" / "c.txt").write_text("py")
+    records = list(
+        extract_files(
+            [tmp_path],
+            exclude_dir_names=["node_modules", ".git", "__pycache__"],
+        )
+    )
+    contents = [r["content"] for r in records]
+    assert contents == ["kept"]
+
+
+def test_exclude_dir_names_empty_default_keeps_everything(tmp_path: Path) -> None:
+    (tmp_path / "good.txt").write_text("alpha")
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "node_modules" / "junk.txt").write_text("npm")
+    records = list(extract_files([tmp_path], exclude_dir_names=None))
+    assert len(records) == 2  # both files included when no exclusion configured
+
+
+def test_exclude_dir_names_does_not_match_substring(tmp_path: Path) -> None:
+    """Exact-name match only — 'modules' shouldn't match 'node_modules'."""
+    nm = tmp_path / "node_modules"
+    nm.mkdir()
+    (nm / "junk.txt").write_text("should be skipped")
+    (tmp_path / "modules_kept.txt").write_text("legit content")
+    records = list(extract_files([tmp_path], exclude_dir_names=["node_modules"]))
+    contents = [r["content"] for r in records]
+    assert contents == ["legit content"]
