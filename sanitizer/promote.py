@@ -253,6 +253,72 @@ def promote_local_files(record: dict[str, Any]) -> tuple[str, str]:
     return filename, markdown
 
 
+def promote_apple_notes(record: dict[str, Any]) -> tuple[str, str]:
+    """Render one Apple Notes record as a Scribe-style ``type: note``.
+
+    Apple Notes are atomic user-typed thoughts (journal entries, lists,
+    captured ideas) — closer to Scribe's ``type: note`` template than
+    the document-shaped ``type: reference``. Folder name (e.g. "Travel",
+    "Recipes", "Health") flows into tags so the Sorter has routing hints
+    even if the body is sparse.
+    """
+    metadata = record.get("metadata", {}) or {}
+    title = _str(metadata.get("title")) or "Untitled note"
+    folder = _str(metadata.get("folder"))
+    account = _str(metadata.get("account"))
+    modified = _str(metadata.get("modified"))
+    snippet = _str(metadata.get("snippet"))
+    timestamp = _str(record.get("timestamp"))
+    date_str, _ = _split_iso(timestamp)
+    modified_date, _ = _split_iso(modified)
+    content = _str(record.get("content"))
+
+    # Tags: standard "note" + "imported" + "apple-notes" + folder name
+    # (lowercased, spaces → dashes) so the Sorter can route by folder.
+    tags = ["note", "imported", "apple-notes"]
+    if folder:
+        tag = folder.lower().replace(" ", "-").replace("/", "-")
+        if tag and tag not in tags:
+            tags.append(tag)
+
+    fm: dict[str, Any] = {
+        "type": "note",
+        "date": date_str,
+        "tags": tags,
+        "status": "inbox",
+        "source": "apple-notes",
+        "source-record-id": _str(record.get("source_id")),
+        "apple-notes-folder": folder,
+        "apple-notes-account": account,
+        "modified-date": modified_date,
+        "created": _now_iso(),
+    }
+
+    body_lines: list[str] = []
+    body_lines.append(f"# {title}")
+    body_lines.append("")
+    meta_bits = []
+    if folder:
+        meta_bits.append(f"**Folder**: {folder}")
+    if account:
+        meta_bits.append(f"**Account**: {account}")
+    if modified_date and modified_date != date_str:
+        meta_bits.append(f"**Modified**: {modified_date}")
+    if meta_bits:
+        body_lines.extend(meta_bits)
+        body_lines.append("")
+    body_lines.append("## Content")
+    body_lines.append("")
+    body_lines.append(content if content else (snippet if snippet else "*(empty note)*"))
+    body_lines.append("")
+    body_lines.append("---")
+    body_lines.append("*Imported from sanitized Apple Notes export.*")
+
+    markdown = _render_note(fm, "\n".join(body_lines))
+    filename = _build_filename(date_str, "Note", title)
+    return filename, markdown
+
+
 def promote_imessage(records: Iterable[dict[str, Any]]) -> Iterator[tuple[str, str]]:
     """Group iMessage records by ``(chat_identifier, day)`` and yield one
     transcript note per group.

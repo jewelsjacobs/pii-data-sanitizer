@@ -122,9 +122,7 @@ def extract_files(
                     continue
                 if _is_under_any(file, excluded):
                     continue
-                if excluded_names and _has_excluded_ancestor_name(
-                    file, entry, excluded_names
-                ):
+                if excluded_names and _has_excluded_ancestor_name(file, entry, excluded_names):
                     continue
                 ext = file.suffix.lower()
                 if ext in UNSUPPORTED_EXTENSIONS:
@@ -199,9 +197,7 @@ def _is_under_any(path: Path, dirs: list[Path]) -> bool:
     return False
 
 
-def _has_excluded_ancestor_name(
-    file: Path, root: Path, excluded_names: frozenset[str]
-) -> bool:
+def _has_excluded_ancestor_name(file: Path, root: Path, excluded_names: frozenset[str]) -> bool:
     """True iff any ancestor directory of ``file`` (between ``root`` and
     the file itself) has a name in ``excluded_names``.
 

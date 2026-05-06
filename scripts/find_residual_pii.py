@@ -86,9 +86,7 @@ def main(argv: list[str] | None = None) -> int:
                     elif isinstance(v, dict):
                         for sub_k, sub_v in v.items():
                             if isinstance(sub_v, str) and needle_lower in sub_v.casefold():
-                                fields.append(
-                                    f"metadata.{k}.{sub_k}(len={len(sub_v)})"
-                                )
+                                fields.append(f"metadata.{k}.{sub_k}(len={len(sub_v)})")
 
             if not fields:
                 continue

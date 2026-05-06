@@ -22,6 +22,7 @@ class LocalConfig:
     ical_source_dirs: list[Path] = field(default_factory=list)
     local_files_source_dirs: list[Path] = field(default_factory=list)
     imessage_chat_db_path: Path | None = None
+    apple_notes_db_path: Path | None = None
     self_emails: frozenset[str] = field(default_factory=frozenset)
     self_phones: frozenset[str] = field(default_factory=frozenset)
     keep_names: frozenset[str] = field(default_factory=frozenset)
@@ -52,10 +53,13 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> LocalConfig:
     data = json.loads(path.read_text())
     imessage_raw = data.get("imessage_chat_db_path")
     imessage_path = Path(imessage_raw).expanduser() if imessage_raw else None
+    notes_raw = data.get("apple_notes_db_path")
+    notes_path = Path(notes_raw).expanduser() if notes_raw else None
     return LocalConfig(
         ical_source_dirs=[Path(p) for p in data.get("ical_source_dirs", [])],
         local_files_source_dirs=[Path(p) for p in data.get("local_files_source_dirs", [])],
         imessage_chat_db_path=imessage_path,
+        apple_notes_db_path=notes_path,
         self_emails=frozenset(e.strip().lower() for e in data.get("self_emails", [])),
         self_phones=frozenset(_normalize_phone(p) for p in data.get("self_phones", [])),
         keep_names=frozenset(data.get("keep_names", [])),

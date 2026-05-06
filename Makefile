@@ -1,4 +1,4 @@
-.PHONY: install test lint format extract extract-ical extract-local-files extract-apple-mail extract-imessage sanitize sanitize-ical sanitize-local-files sanitize-apple-mail sanitize-imessage audit audit-ical audit-local-files audit-apple-mail audit-imessage promote promote-ical promote-local-files promote-apple-mail promote-imessage state verify-split verify-split-user verify-split-agent
+.PHONY: install test lint format extract extract-ical extract-local-files extract-apple-mail extract-imessage extract-apple-notes sanitize sanitize-ical sanitize-local-files sanitize-apple-mail sanitize-imessage sanitize-apple-notes audit audit-ical audit-local-files audit-apple-mail audit-imessage audit-apple-notes promote promote-ical promote-local-files promote-apple-mail promote-imessage promote-apple-notes state verify-split verify-split-user verify-split-agent
 
 # Pass extra flags through to the underlying scripts, e.g.
 #   make sanitize-apple-mail ARGS="--since 2026-03-30"
@@ -21,7 +21,7 @@ format:
 	uv run ruff format .
 	uv run ruff check --fix .
 
-extract: extract-ical extract-local-files extract-apple-mail extract-imessage
+extract: extract-ical extract-local-files extract-apple-mail extract-imessage extract-apple-notes
 
 extract-ical:
 	uv run python -m scripts.extract_ical $(ARGS)
@@ -35,7 +35,10 @@ extract-apple-mail:
 extract-imessage:
 	uv run python -m scripts.extract_imessage $(ARGS)
 
-sanitize: sanitize-ical sanitize-local-files sanitize-apple-mail sanitize-imessage
+extract-apple-notes:
+	uv run python -m scripts.extract_apple_notes $(ARGS)
+
+sanitize: sanitize-ical sanitize-local-files sanitize-apple-mail sanitize-imessage sanitize-apple-notes
 
 sanitize-ical:
 	uv run python -m scripts.sanitize_source --source ical $(ARGS)
@@ -49,7 +52,10 @@ sanitize-apple-mail:
 sanitize-imessage:
 	uv run python -m scripts.sanitize_source --source imessage $(ARGS)
 
-audit: audit-ical audit-local-files audit-apple-mail audit-imessage
+sanitize-apple-notes:
+	uv run python -m scripts.sanitize_source --source apple-notes $(ARGS)
+
+audit: audit-ical audit-local-files audit-apple-mail audit-imessage audit-apple-notes
 
 audit-ical:
 	uv run python -m scripts.audit_source --source ical $(ARGS)
@@ -63,7 +69,10 @@ audit-apple-mail:
 audit-imessage:
 	uv run python -m scripts.audit_source --source imessage $(ARGS)
 
-promote: promote-ical promote-local-files promote-apple-mail promote-imessage
+audit-apple-notes:
+	uv run python -m scripts.audit_source --source apple-notes $(ARGS)
+
+promote: promote-ical promote-local-files promote-apple-mail promote-imessage promote-apple-notes
 
 promote-ical:
 	uv run python -m scripts.promote_to_inbox --source ical $(ARGS)
@@ -76,6 +85,9 @@ promote-apple-mail:
 
 promote-imessage:
 	uv run python -m scripts.promote_to_inbox --source imessage $(ARGS)
+
+promote-apple-notes:
+	uv run python -m scripts.promote_to_inbox --source apple-notes $(ARGS)
 
 state:
 	uv run python -m scripts.show_state $(ARGS)

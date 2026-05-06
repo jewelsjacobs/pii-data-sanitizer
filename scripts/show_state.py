@@ -14,7 +14,7 @@ from pathlib import Path
 from sanitizer.state import read_state
 from scripts._config import LocalConfig, load_config
 
-KNOWN_SOURCES = ("ical", "apple-mail", "imessage", "local-files")
+KNOWN_SOURCES = ("ical", "apple-mail", "imessage", "local-files", "apple-notes")
 
 
 def main(argv: list[str] | None = None) -> int:

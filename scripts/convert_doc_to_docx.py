@@ -73,8 +73,11 @@ def main(argv: list[str] | None = None) -> int:
         source_dirs = list(cfg.local_files_source_dirs)
 
     if not source_dirs:
-        print("error: no source dirs configured. Pass --source-dir or set "
-              "local_files_source_dirs in config.", file=sys.stderr)
+        print(
+            "error: no source dirs configured. Pass --source-dir or set "
+            "local_files_source_dirs in config.",
+            file=sys.stderr,
+        )
         return 2
 
     mode = "APPLY (converting)" if args.apply else "DRY-RUN (no changes)"
@@ -127,8 +130,7 @@ def main(argv: list[str] | None = None) -> int:
             except subprocess.CalledProcessError as exc:
                 failed.append(doc_path)
                 stderr = (exc.stderr or b"").decode("utf-8", errors="replace").strip()
-                print(f"  fail: {doc_path}: {stderr or 'textutil error'}",
-                      file=sys.stderr)
+                print(f"  fail: {doc_path}: {stderr or 'textutil error'}", file=sys.stderr)
 
     print()
     print(f"Found .doc files:       {found:,}")
@@ -138,8 +140,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.apply and found > 0:
         print()
-        print(f"This was a DRY-RUN. {found - skipped_existing} files would "
-              f"be converted (skipping {skipped_existing} already-converted).")
+        print(
+            f"This was a DRY-RUN. {found - skipped_existing} files would "
+            f"be converted (skipping {skipped_existing} already-converted)."
+        )
         print("Re-run with --apply to actually convert.")
 
     return 1 if failed else 0

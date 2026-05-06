@@ -24,6 +24,7 @@ from typing import Any
 
 from sanitizer.promote import (
     promote_apple_mail,
+    promote_apple_notes,
     promote_ical,
     promote_imessage,
     promote_local_files,
@@ -36,6 +37,7 @@ _PER_RECORD_PROMOTERS = {
     "ical": promote_ical,
     "apple-mail": promote_apple_mail,
     "local-files": promote_local_files,
+    "apple-notes": promote_apple_notes,
 }
 
 
@@ -44,7 +46,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--source",
         required=True,
-        choices=["ical", "apple-mail", "imessage", "local-files"],
+        choices=["ical", "apple-mail", "imessage", "local-files", "apple-notes"],
         help="Source name to promote.",
     )
     parser.add_argument(
