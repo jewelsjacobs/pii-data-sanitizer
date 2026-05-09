@@ -296,9 +296,9 @@ RULES: list[Rule] = [
         name="labeled_gov_id",
         pattern=re.compile(
             r"(?im)(?P<label>"
-            r"\b(?:DSHS|EBT|SNAP|TANF|Medicaid|Medicare|Insurance|Health|"
-            r"Member|Patient|Policy|Case|Client|Subscriber|Plan)"
-            r"(?:\s+(?:Client|Case|Member|Patient|Subscriber|Account|Group|Plan|Policy))?"
+            r"\b(?:DSHS|EBT|SNAP|TANF|Medicaid|Medicare|Insurance|Insured|Health|"
+            r"Member|Patient|Policy|Case|Client|Subscriber|Plan|Group)"
+            r"(?:\s+(?:Client|Case|Member|Patient|Subscriber|Account|Acct\.?|Group|Plan|Policy))?"
             r"\s+(?:ID|Number|#|No\.?)"
             r")"
             r"(?P<sep>\s*(?:\([^)]*\))?\s*[:#=]?\s*)"
