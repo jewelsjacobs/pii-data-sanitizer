@@ -179,6 +179,22 @@ denied on raw-staging, mapping, config, .env, ~/Library/Mail,
 **post-M7 hardening (deferred local-files end-to-end run + ongoing
 rule iteration as the agent crew exercises the pipeline).**
 
+Post-M7 addition (2026-05-09): EOB sanitization pathway for SSA
+disability documentation. Standard pipeline pseudonymizes provider
+names, doctor names, and facility addresses (NER ORG/PERSON +
+``_sub_addresses``) — fatal for EOBs used as proof of medical events.
+``scripts/sanitize_eobs.py`` runs ``apply_rules`` (minus ``zip_code``,
+plus new ``labeled_dob`` / ``labeled_claim``) + scrub_strings + email
+pseudonymization, and skips ``_sub_phones`` (NPIs are 10 digits),
+``_sub_addresses``, and ``_sub_ner``. ``scripts/promote_eobs.py``
+emits ``type: eob`` markdown with ``ssa-evidence`` tag. Output lives
+under the isolated ``eobs/`` source name so it never clobbers
+``local-files``. Real-run hardening produced one rules.py improvement
+that benefits every source: ``labeled_gov_id`` now catches ``Insured``
+/ ``Group`` first-role labels and the ``Acct`` Account abbreviation.
+309 tests passing. Make targets: ``extract-eobs`` / ``sanitize-eobs`` /
+``promote-eobs`` (and ``eobs`` aggregate).
+
 M7 notes: `docs/account-split.md` documents the full
 juliajacobs↔openclaw boundary on macOS — ACL chain on home →
 projects → pii-data-sanitizer to grant openclaw read on

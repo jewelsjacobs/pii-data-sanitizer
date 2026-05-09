@@ -1,4 +1,4 @@
-.PHONY: install test lint format extract extract-ical extract-local-files extract-apple-mail extract-imessage extract-apple-notes sanitize sanitize-ical sanitize-local-files sanitize-apple-mail sanitize-imessage sanitize-apple-notes audit audit-ical audit-local-files audit-apple-mail audit-imessage audit-apple-notes promote promote-ical promote-local-files promote-apple-mail promote-imessage promote-apple-notes state verify-split verify-split-user verify-split-agent
+.PHONY: install test lint format extract extract-ical extract-local-files extract-apple-mail extract-imessage extract-apple-notes extract-eobs sanitize sanitize-ical sanitize-local-files sanitize-apple-mail sanitize-imessage sanitize-apple-notes sanitize-eobs audit audit-ical audit-local-files audit-apple-mail audit-imessage audit-apple-notes promote promote-ical promote-local-files promote-apple-mail promote-imessage promote-apple-notes promote-eobs eobs state verify-split verify-split-user verify-split-agent
 
 # Pass extra flags through to the underlying scripts, e.g.
 #   make sanitize-apple-mail ARGS="--since 2026-03-30"
@@ -103,3 +103,20 @@ verify-split-user:
 
 verify-split-agent:
 	uv run python -m scripts.verify_account_split --profile agent $(ARGS)
+
+# EOB pipeline — tailored sanitizer for SSA disability documentation.
+# Standard pipeline pseudonymizes provider names + addresses; EOBs need
+# them preserved verbatim. See scripts/sanitize_eobs.py for the redaction
+# divergence. Pass EOB source dirs via --source-dir on extract:
+#   make extract-eobs ARGS="--source-dir /path/to/EOBs"
+extract-eobs:
+	uv run python -m scripts.extract_local_files --include-extensions .pdf --out-dir raw-staging/eobs $(ARGS)
+
+sanitize-eobs:
+	uv run python -m scripts.sanitize_eobs $(ARGS)
+
+promote-eobs:
+	uv run python -m scripts.promote_eobs $(ARGS)
+
+# Aggregate: sanitize + promote (re-run friendly with ARGS="--overwrite")
+eobs: sanitize-eobs promote-eobs
