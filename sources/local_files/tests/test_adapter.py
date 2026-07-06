@@ -6,6 +6,7 @@ with the repo. Every filename and content string here is synthetic.
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 
@@ -495,3 +496,63 @@ def test_exclude_dir_names_does_not_match_substring(tmp_path: Path) -> None:
     records = list(extract_files([tmp_path], exclude_dir_names=["node_modules"]))
     contents = [r["content"] for r in records]
     assert contents == ["legit content"]
+
+
+def _set_mtime(path: Path, iso_day: str) -> None:
+    """Pin a file's mtime to noon UTC on the given day."""
+    from datetime import UTC, datetime
+
+    ts = datetime.fromisoformat(f"{iso_day}T12:00:00+00:00").astimezone(UTC).timestamp()
+    os.utime(path, (ts, ts))
+
+
+def test_modified_since_skips_old_files(tmp_path: Path) -> None:
+    """Files with mtime before the window are never extracted."""
+    old = tmp_path / "old.txt"
+    old.write_text("ancient")
+    _set_mtime(old, "2024-01-15")
+    new = tmp_path / "new.txt"
+    new.write_text("recent")
+    _set_mtime(new, "2026-06-01")
+    records = list(extract_files([tmp_path], modified_since="2026-05-05"))
+    assert [r["content"] for r in records] == ["recent"]
+
+
+def test_modified_since_boundary_day_is_inclusive(tmp_path: Path) -> None:
+    """mtime exactly on the window date is kept (matches sanitize --since)."""
+    f = tmp_path / "boundary.txt"
+    f.write_text("on the line")
+    _set_mtime(f, "2026-05-05")
+    records = list(extract_files([tmp_path], modified_since="2026-05-05"))
+    assert len(records) == 1
+
+
+def test_modified_since_old_legacy_doc_does_not_halt(tmp_path: Path) -> None:
+    """The window check precedes extension policy: an out-of-window legacy
+    .doc must not raise, even without skip_unsupported."""
+    doc = tmp_path / "ancient.doc"
+    doc.write_bytes(b"\xd0\xcf\x11\xe0old word junk")
+    _set_mtime(doc, "2019-03-03")
+    (tmp_path / "new.txt").write_text("fine")
+    records = list(extract_files([tmp_path], modified_since="2026-05-05"))
+    assert [r["content"] for r in records] == ["fine"]
+
+
+def test_modified_since_old_broken_encoding_does_not_halt(tmp_path: Path) -> None:
+    """Out-of-window cp1252 text (0x96 en-dash) is never opened, so no
+    decode halt — the empirical dropbox-restore case."""
+    legacy = tmp_path / "cp1252.txt"
+    legacy.write_bytes(b"meeting notes \x96 draft")
+    _set_mtime(legacy, "2020-07-07")
+    (tmp_path / "new.txt").write_text("fine")
+    records = list(extract_files([tmp_path], modified_since="2026-05-05"))
+    assert [r["content"] for r in records] == ["fine"]
+
+
+def test_modified_since_none_keeps_everything(tmp_path: Path) -> None:
+    """No window → full-archive behavior unchanged."""
+    old = tmp_path / "old.txt"
+    old.write_text("ancient")
+    _set_mtime(old, "2024-01-15")
+    records = list(extract_files([tmp_path], modified_since=None))
+    assert len(records) == 1

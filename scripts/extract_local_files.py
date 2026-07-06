@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 from scripts._config import LocalConfig, load_config
+from scripts._filter import validate_since
 from sources.local_files.adapter import SUPPORTED_EXTENSIONS, AdapterError, extract_files
 
 
@@ -96,6 +97,19 @@ def main(argv: list[str] | None = None) -> int:
             "takes a single absolute path."
         ),
     )
+    parser.add_argument(
+        "--modified-since",
+        type=validate_since,
+        default=None,
+        help=(
+            "Only read files whose mtime date (UTC, zero-padded YYYY-MM-DD) is "
+            "on or after this date — the incremental-run mode from "
+            "source-adapters.md → Open Items. The check runs before any file "
+            "is opened, so legacy formats and broken encodings in the "
+            "untouched archive can't halt a windowed run. Match this to the "
+            "sanitize step's --since (both compare UTC dates)."
+        ),
+    )
     args = parser.parse_args(argv)
 
     cfg: LocalConfig = load_config(args.config)
@@ -139,6 +153,7 @@ def main(argv: list[str] | None = None) -> int:
             continue_on_error=args.continue_on_error,
             exclude_dirs=args.exclude_dir,
             exclude_dir_names=args.exclude_dir_name,
+            modified_since=args.modified_since,
         ):
             fout.write(json.dumps(record) + "\n")
             count += 1

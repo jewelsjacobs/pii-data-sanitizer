@@ -42,6 +42,7 @@ def extract_files(
     continue_on_error: bool = False,
     exclude_dirs: list[Path] | None = None,
     exclude_dir_names: list[str] | None = None,
+    modified_since: str | None = None,
 ) -> Iterator[dict[str, Any]]:
     """Yield normalized records from every supported file under ``paths``.
 
@@ -85,6 +86,15 @@ def extract_files(
     Use for dev-junk that recurs throughout the source tree
     (``node_modules``, ``.git``, ``__pycache__``, ``.venv``).
     Distinct from ``exclude_dirs`` which takes absolute paths.
+
+    ``modified_since`` (``YYYY-MM-DD``) skips any file whose mtime date
+    (UTC — same clock the record ``timestamp`` uses, so the filter is
+    consistent with sanitize's ``--since`` window) is before the given
+    date, *before* the file is opened or its extension policy applied.
+    This is the incremental-run mode from source-adapters.md → Open
+    Items: a windowed vault update only reads files touched in the
+    window, so legacy formats and broken encodings in the untouched
+    archive can't halt the run.
     """
     if include_extensions is not None:
         bad = include_extensions - SUPPORTED_EXTENSIONS
@@ -103,7 +113,15 @@ def extract_files(
     files_seen = 0
     files_extracted = 0
     files_skipped = 0
+    files_pre_window = 0
     progress_every = 100
+
+    def _before_window(file: Path) -> bool:
+        """True when the file's UTC mtime date falls before ``modified_since``."""
+        if modified_since is None:
+            return False
+        mtime_day = datetime.fromtimestamp(file.stat().st_mtime, tz=UTC).date().isoformat()
+        return mtime_day < modified_since
 
     def _heartbeat() -> None:
         if files_seen and files_seen % progress_every == 0:
@@ -123,6 +141,12 @@ def extract_files(
                 if _is_under_any(file, excluded):
                     continue
                 if excluded_names and _has_excluded_ancestor_name(file, entry, excluded_names):
+                    continue
+                # mtime window check comes BEFORE extension policy: an old
+                # legacy .doc or broken-encoding file outside the window
+                # must not halt a windowed incremental run.
+                if _before_window(file):
+                    files_pre_window += 1
                     continue
                 ext = file.suffix.lower()
                 if ext in UNSUPPORTED_EXTENSIONS:
@@ -151,6 +175,9 @@ def extract_files(
         elif entry.is_file():
             if _is_under_any(entry, excluded):
                 continue
+            if _before_window(entry):
+                files_pre_window += 1
+                continue
             ext = entry.suffix.lower()
             if ext in UNSUPPORTED_EXTENSIONS:
                 if skip_unsupported:
@@ -171,10 +198,13 @@ def extract_files(
             raise AdapterError(f"Not a file or directory: {entry}")
 
     # Final summary, regardless of whether the periodic threshold landed exactly.
-    if files_seen:
+    if files_seen or files_pre_window:
+        window_note = (
+            f", {files_pre_window} outside --modified-since window" if modified_since else ""
+        )
         print(
             f"  total: {files_seen} files visited "
-            f"({files_extracted} extracted, {files_skipped} skipped)",
+            f"({files_extracted} extracted, {files_skipped} skipped{window_note})",
             file=sys.stderr,
             flush=True,
         )

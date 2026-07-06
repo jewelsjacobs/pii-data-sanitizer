@@ -42,6 +42,19 @@ class Mapping:
     def contains(self, kind: str, key: str) -> bool:
         return key in self._by_kind.get(kind, {})
 
+    def entries(self, kind: str) -> dict[str, str]:
+        """Return a copy of the ``key -> pseudonym`` dict for ``kind``.
+
+        Used by the known-surface sweep in the pipeline: entities already
+        in the mapping are substituted by literal match even where NER
+        fails to detect them (short calendar titles, greetings, etc.).
+        """
+        return dict(self._by_kind.get(kind, {}))
+
+    def size(self, kind: str) -> int:
+        """Number of entries for ``kind`` — cheap cache-invalidation signal."""
+        return len(self._by_kind.get(kind, {}))
+
     def to_dict(self) -> dict[str, object]:
         return {"by_kind": self._by_kind, "counters": self._counters}
 

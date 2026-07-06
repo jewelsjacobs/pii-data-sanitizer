@@ -12,7 +12,7 @@ properties that PLAN.md's M2 "Done when" criteria call out explicitly:
 from __future__ import annotations
 
 from sanitizer.mapping import Mapping
-from sanitizer.pipeline import KeepList, SelfIdentity, sanitize
+from sanitizer.pipeline import KeepList, SelfIdentity, _sub_known_entities, sanitize
 
 
 def _record(content: str) -> dict:
@@ -91,6 +91,104 @@ def test_structural_metadata_is_preserved() -> None:
     assert out["metadata"]["attachment_count"] == 0
 
 
+def test_calendar_name_is_sanitized_not_preserved() -> None:
+    """calendar_name gets the full entity catalog, like metadata.folder.
+
+    Calendar.app derives calendar_name from X-WR-CALNAME or the .ics
+    filename — which for subscribed Google calendars is an email address.
+    Regression: calendar_name used to sit in _STRUCTURAL_KEEP_KEYS and
+    leaked raw. Generic names must still pass through unchanged.
+    """
+    identity = SelfIdentity(emails=frozenset({"me@example.invalid"}))
+    rec = {
+        "source": "ical",
+        "source_id": "cal-name-1",
+        "timestamp": "2026-05-01T10:00:00+00:00",
+        "content": "Dentist",
+        "metadata": {"calendar_name": "me@example.invalid", "rrule": "FREQ=WEEKLY"},
+    }
+    out = sanitize(rec, self_identity=identity)
+    assert out["metadata"]["calendar_name"] == "[MY_EMAIL]"
+    # rrule stays structural.
+    assert out["metadata"]["rrule"] == "FREQ=WEEKLY"
+
+    generic = dict(rec, source_id="cal-name-2", metadata={"calendar_name": "Work"})
+    assert sanitize(generic, self_identity=identity)["metadata"]["calendar_name"] == "Work"
+
+
+def test_known_person_substituted_without_ner_context() -> None:
+    """A person already in the mapping is replaced even in text too short
+    or context-free for NER to detect — the calendar-title leak."""
+    m = Mapping()
+    # Simulate a prior run having mapped this person via NER.
+    token = m.get_or_assign("PERSON", "Linda Hartwell")
+    rec = _record("Linda Hartwell")  # bare title, no sentence context
+    out = sanitize(rec, mapping=m)
+    assert out["content"] == token
+    assert m.get_or_assign("PERSON", "Linda Hartwell") == token  # stable
+
+
+def test_known_person_sweep_is_case_sensitive_and_word_bounded() -> None:
+    """A mapped name that collides with a common word must not consume it.
+
+    Tests _sub_known_entities directly — the full sanitize() path would let
+    NER independently tag lookalike words and muddy the assertion.
+    """
+    m = Mapping()
+    m.get_or_assign("PERSON", "Will")
+    out = _sub_known_entities("Coffee with Will — he will bring the Willows book.", m, KeepList())
+    assert out == "Coffee with [PERSON_1] — he will bring the Willows book."
+
+
+def test_known_org_substituted_without_ner_context() -> None:
+    """A mapped ORG is swept even where NER misses it — keeps content and
+    metadata consistent (empirical leak: an event title's '@ <org>' suffix
+    caught in metadata.summary but missed in the concatenated content)."""
+    m = Mapping()
+    token = m.get_or_assign("ORG", "Northstar Investments")
+    out = _sub_known_entities("Q3 review @ Northstar Investments", m, KeepList())
+    assert out == f"Q3 review @ {token}"
+
+
+def test_known_sweep_person_wins_over_org_on_same_surface() -> None:
+    """A surface mapped under both kinds resolves to the PERSON token."""
+    m = Mapping()
+    org = m.get_or_assign("ORG", "Hartwell")
+    person = m.get_or_assign("PERSON", "Hartwell")
+    out = _sub_known_entities("Meet Hartwell at nine", m, KeepList())
+    assert person in out
+    assert org not in out
+
+
+def test_known_sweep_respects_gpe_keep_list() -> None:
+    """A keep-listed GPE (e.g. the user's home city) is never swept even
+    if some run mis-mapped it as an ORG."""
+    m = Mapping()
+    m.get_or_assign("ORG", "Springfield")
+    keep = KeepList(gpes=frozenset({"Springfield"}))
+    out = _sub_known_entities("Flight back to Springfield", m, keep)
+    assert out == "Flight back to Springfield"
+
+
+def test_known_person_sweep_respects_keep_list() -> None:
+    """A keep-listed name is never substituted even if mapped previously."""
+    m = Mapping()
+    m.get_or_assign("PERSON", "Mochi")
+    keep = KeepList(names=frozenset({"Mochi"}))
+    out = sanitize(_record("Walk Mochi at noon"), mapping=m, keep=keep)
+    assert "Mochi" in out["content"]
+
+
+def test_known_person_sweep_prefers_longest_surface() -> None:
+    """'Linda Hartwell' must win over a bare 'Linda' mapping entry."""
+    m = Mapping()
+    first = m.get_or_assign("PERSON", "Linda")
+    full = m.get_or_assign("PERSON", "Linda Hartwell")
+    out = sanitize(_record("Dinner w/ Linda Hartwell"), mapping=m)
+    assert full in out["content"]
+    assert first not in out["content"]
+
+
 def test_phone_with_multi_char_separators() -> None:
     """Audit caught (NNN)-NNN- NNNN format (extra hyphen + space) leaking
     through. The phone regex must allow runs of separators between groups."""
@@ -98,6 +196,29 @@ def test_phone_with_multi_char_separators() -> None:
     out = sanitize(rec)
     assert "(732)" not in out["content"]
     assert "0987" not in out["content"]
+    assert "[PHONE_" in out["content"]
+
+
+def test_person_token_trailing_initial_collapsed() -> None:
+    """'[PERSON_N] S.' leaks a last-name hint — the initial folds into the
+    token (audit-found on a swept first name + surviving initial)."""
+    m = Mapping()
+    m.get_or_assign("PERSON", "Zed")
+    out = sanitize(_record("Massage w/ Zed S. at noon"), mapping=m)
+    assert "[PERSON_1]" in out["content"]
+    assert " S." not in out["content"]
+    # A capitalized word without a period after a token must survive.
+    m2 = Mapping()
+    m2.get_or_assign("PERSON", "Zed")
+    out2 = sanitize(_record("Zed OK'd the plan"), mapping=m2)
+    assert "OK'd" in out2["content"]
+
+
+def test_phone_international_three_group_shape() -> None:
+    """3-4-4 spaced grouping (audit-found international shape) is caught."""
+    rec = _record("Front desk: 020 7946 0958, ask for reception.")
+    out = sanitize(rec)
+    assert "7946" not in out["content"]
     assert "[PHONE_" in out["content"]
 
 

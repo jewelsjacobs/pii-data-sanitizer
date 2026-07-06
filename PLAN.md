@@ -176,8 +176,32 @@ Current milestone: **M7 complete.** Both verification profiles pass on
 the real machine: user profile reads everything, agent profile is
 denied on raw-staging, mapping, config, .env, ~/Library/Mail,
 ~/Library/Messages, and reads clean-staging + vault. Next up:
-**post-M7 hardening (deferred local-files end-to-end run + ongoing
-rule iteration as the agent crew exercises the pipeline).**
+**post-M7 hardening (ongoing rule iteration as the agent crew
+exercises the pipeline + apple-notes date-column fix, see below).**
+
+Post-M7 addition (2026-07-05): incremental vault update run (ical +
+apple-mail since 2026-04-29, local-files since 2026-05-05 — the
+first real local-files run, closing the M6 deferral). Audit-driven
+iteration produced pipeline improvements that benefit every source:
+``calendar_name`` removed from ``_STRUCTURAL_KEEP_KEYS`` (was leaking
+raw calendar names, including an email-address-named subscribed
+calendar); a known-surface sweep (``_sub_known_entities``) that
+substitutes already-mapped PERSON/ORG surfaces by literal
+word-boundary match wherever NER misses them (short titles, per-field
+context differences); trailing person-initials collapse
+(``[PERSON_N] S.`` → ``[PERSON_N]``); a 3-4-4 international phone
+branch; ``scripts/add_mapping_entity.py`` (manual mapping additions,
+prints tokens only); ``scripts/locate_audit_findings.py`` (reports
+which record field contains each audit excerpt, PII-free output);
+and ``--modified-since`` on the local-files extractor (windowed
+incremental extraction — see source-adapters.md → Open Items).
+Final audits: ical 0 findings, apple-mail 0, local-files 2 confirmed
+false positives. 324 tests passing. Known deferred issue: the
+apple-notes adapter reads only ``ZCREATIONDATE1`` and stamps
+``2001-01-01`` when NULL, which makes ``--since`` windows silently
+drop those notes — fix by COALESCE-ing across the
+``ZCREATIONDATE*``/``ZMODIFICATIONDATE*`` families (mirroring
+``scripts/backfill_apple_notes_dates.py``) before the next notes run.
 
 Post-M7 addition (2026-05-09): EOB sanitization pathway for SSA
 disability documentation. Standard pipeline pseudonymizes provider

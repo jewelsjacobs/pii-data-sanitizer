@@ -34,7 +34,12 @@ _STRUCTURAL_KEEP_KEYS = frozenset(
         "ocr_low_confidence",
         "page_count",
         "size_bytes",
-        "calendar_name",
+        # NOTE: calendar_name is deliberately NOT here. Calendar.app derives
+        # it from X-WR-CALNAME or the .ics filename, which can be an email
+        # address (subscribed Google calendars) or a provider/facility name.
+        # Policy (redaction-policy.md → Calendar Event Fields) keeps only
+        # UID/DTSTART/DTEND/RRULE; name-like fields get the full entity
+        # catalog, same as metadata.folder for apple-mail.
         "chat_is_group",
         "from_me",
         "service",
@@ -60,6 +65,12 @@ _PHONE_RE = re.compile(
     r"(?!\d)"
     # Branch 2: bare 10-15 digits (E.164, no separators).
     r"|(?<!\d)\+?\d{10,15}(?!\d)"
+    # Branch 2b: international group shapes — three groups of 3-5 digits
+    # (e.g. "020 7946 0958", "NNN NNNN NNNN"), optional +CC prefix. Audit
+    # caught a 3-4-4 spaced number that branches 1-3 all miss: branch 1
+    # hard-codes 3-3-4, branch 2 forbids separators, branch 3 requires
+    # every digit separated.
+    r"|(?<!\d)(?:\+\d{1,3}[-. ]+)?\d{3,5}[-. ]{1,3}\d{3,5}[-. ]{1,3}\d{3,5}(?!\d)"
     # Branch 3: OCR-spaced — every digit separated by mandatory whitespace
     # and/or hyphen. 10-12 digits total. Captures shapes like
     # "5 1 3 - 6 0 8 - 1 4 4 9" or "1 1 5 5 4 8 1 1 7 9 7" that the
@@ -196,7 +207,86 @@ def _sanitize_text_chunk(
     text = _sub_phones(text, mapping, identity)
     text = _sub_addresses(text, mapping)
     text = _sub_ner(text, mapping, keep)
+    # Mop-up AFTER NER: NER gets first crack at full spans with context
+    # ("Linda Hartwell" as one entity); the known-surface sweep then only
+    # substitutes mapped entities NER failed to detect. Running it before
+    # NER would let a short mapped surface ("Linda") partially consume a
+    # longer span NER would have caught whole.
+    text = _sub_known_entities(text, mapping, keep)
+    text = _collapse_person_initials(text)
     return text
+
+
+# A pseudonymized person followed by dangling name-initials — "[PERSON_7] S."
+# — still leaks a last-name hint (audit-found on a provider name where the
+# first name was swept but the trailing initial survived). Fold the initials
+# into the token. Requires the period so a legitimate single-capital word
+# after a name ("[PERSON_7] OK'd it") is untouched.
+_PERSON_INITIALS_RE = re.compile(r"(\[PERSON_\d+\])(?:\s+[A-Z]\.)+")
+
+
+def _collapse_person_initials(text: str) -> str:
+    return _PERSON_INITIALS_RE.sub(r"\1", text)
+
+
+# Entity kinds covered by the known-surface sweep. PERSON catches the
+# calendar-title leak; ORG keeps content and metadata consistent when NER
+# detects an org in one field's context but not the other's (empirical
+# case: an event title's "@ <org>" suffix caught in metadata.summary but
+# missed in the SUMMARY + DESCRIPTION concatenation in content).
+_KNOWN_SWEEP_KINDS = ("PERSON", "ORG")
+
+# Cache for the known-entities alternation regex. Keyed on the mapping's
+# per-kind entry counts plus the keep-list, so the regex is rebuilt whenever
+# NER assigns a new entity mid-run and reused otherwise. One mapping object
+# per process, so keying on id() is safe.
+_KNOWN_ENTITIES_CACHE: dict[
+    tuple[int, tuple[int, ...], frozenset[str]], re.Pattern[str] | None
+] = {}
+
+
+def _sub_known_entities(text: str, mapping: Mapping, keep: KeepList) -> str:
+    """Replace already-mapped PERSON/ORG surfaces by literal word-boundary match.
+
+    NER routinely misses entities in short, context-free text — calendar
+    titles ("Lunch w/ Sarah"), greetings, folder names — and detection is
+    context-sensitive, so the same surface can be caught in one field and
+    missed in another. But an entity the sanitizer has pseudonymized once
+    is *known*: this pass substitutes every mapped surface wherever it
+    appears, so the mapping-lookup layer (pipeline-architecture.md →
+    Layered redaction #3) holds even where detection fails. Runs after
+    _sub_ner by design — see the ordering comment in _sanitize_text_chunk.
+
+    Match rules: case-sensitive (a person named "Will" must not consume
+    the modal verb "will"), word-boundary, longest-surface-first so
+    "Linda Hartwell" wins over a bare "Linda" entry. Keep-list names and
+    GPEs are never substituted. Surfaces shorter than 3 characters are
+    skipped as too collision-prone. When the same surface is mapped under
+    both kinds, PERSON wins (listed first in _KNOWN_SWEEP_KINDS).
+    """
+    if not text:
+        return text
+    sizes = tuple(mapping.size(kind) for kind in _KNOWN_SWEEP_KINDS)
+    cache_key = (id(mapping), sizes, keep.names | keep.gpes)
+    if cache_key not in _KNOWN_ENTITIES_CACHE:
+        _KNOWN_ENTITIES_CACHE.clear()  # one live entry — old sizes are dead
+        surfaces: dict[str, str] = {}
+        for kind in reversed(_KNOWN_SWEEP_KINDS):  # earlier kinds overwrite later
+            for surface, token in mapping.entries(kind).items():
+                if len(surface) >= 3 and surface not in keep.names and surface not in keep.gpes:
+                    surfaces[surface] = token
+        if surfaces:
+            alternation = "|".join(re.escape(s) for s in sorted(surfaces, key=len, reverse=True))
+            _KNOWN_ENTITIES_CACHE[cache_key] = re.compile(rf"\b(?:{alternation})\b")
+        else:
+            _KNOWN_ENTITIES_CACHE[cache_key] = None
+    pattern = _KNOWN_ENTITIES_CACHE[cache_key]
+    if pattern is None:
+        return text
+    lookup: dict[str, str] = {}
+    for kind in reversed(_KNOWN_SWEEP_KINDS):
+        lookup.update(mapping.entries(kind))
+    return pattern.sub(lambda m: lookup[m.group(0)], text)
 
 
 def _scrub_personal_strings(text: str, scrub_strings: frozenset[str]) -> str:
