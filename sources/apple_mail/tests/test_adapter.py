@@ -594,3 +594,81 @@ def test_fetch_and_cache_gives_up_after_max_reconnects(tmp_path: Path) -> None:
                 tmp_path,
                 max_reconnects=2,
             )
+
+
+def test_rfc2047_q_encoded_subject_is_decoded() -> None:
+    """Q-encoded subjects decode to plain text so the sanitizer can see
+    the name inside (empirical leak: names hidden in =?utf-8?Q?...?=)."""
+    raw = (
+        b"Message-ID: <q-enc@example.invalid>\r\n"
+        b"Date: Mon, 01 Feb 2026 10:00:00 +0000\r\n"
+        b"From: sender@example.invalid\r\n"
+        b"Subject: =?utf-8?Q?Your_email_to_Linda_Hartwell?=\r\n"
+        b"\r\nbody\r\n"
+    )
+    record = _parse_message(raw, folder_name="INBOX")
+    assert record["metadata"]["subject"] == "Your email to Linda Hartwell"
+
+
+def test_rfc2047_split_encoded_words_join_without_gap() -> None:
+    """A name straddling two adjacent encoded-words reassembles whole."""
+    raw = (
+        b"Message-ID: <split-enc@example.invalid>\r\n"
+        b"Date: Mon, 01 Feb 2026 10:00:00 +0000\r\n"
+        b"From: sender@example.invalid\r\n"
+        b"Subject: =?utf-8?q?Re=3A_Linda_Hart?= =?utf-8?q?well_appointment?=\r\n"
+        b"\r\nbody\r\n"
+    )
+    record = _parse_message(raw, folder_name="INBOX")
+    assert record["metadata"]["subject"] == "Re: Linda Hartwell appointment"
+
+
+def test_rfc2047_b_encoded_subject_and_display_name() -> None:
+    """B (base64) subjects and encoded From display-names decode."""
+    import base64
+
+    encoded = base64.b64encode(b"Invoice from Linda Hartwell").decode()
+    raw = (
+        b"Message-ID: <b-enc@example.invalid>\r\n"
+        b"Date: Mon, 01 Feb 2026 10:00:00 +0000\r\n"
+        b"From: =?utf-8?B?TGluZGEgSGFydHdlbGw=?= <lh@example.invalid>\r\n"
+        b"Subject: =?utf-8?B?" + encoded.encode() + b"?=\r\n"
+        b"\r\nbody\r\n"
+    )
+    record = _parse_message(raw, folder_name="INBOX")
+    assert record["metadata"]["subject"] == "Invoice from Linda Hartwell"
+    assert "Linda Hartwell" in record["metadata"]["from"]
+
+
+def test_rfc2047_cp1252_charset_decodes() -> None:
+    """Non-utf8 charsets seen in the real corpus (Cp1252) decode too."""
+    raw = (
+        b"Message-ID: <cp1252-enc@example.invalid>\r\n"
+        b"Date: Mon, 01 Feb 2026 10:00:00 +0000\r\n"
+        b"From: sender@example.invalid\r\n"
+        b"Subject: =?Cp1252?Q?Caf=E9_meeting_notes?=\r\n"
+        b"\r\nbody\r\n"
+    )
+    record = _parse_message(raw, folder_name="INBOX")
+    assert record["metadata"]["subject"] == "Café meeting notes"
+
+
+def test_plain_subject_passes_through_unchanged() -> None:
+    """Subjects without encoded-words are untouched (fast path)."""
+    raw = _build(body="x")
+    record = _parse_message(raw, folder_name="INBOX")
+    assert record["metadata"]["subject"] == "Test message"
+
+
+def test_malformed_encoded_word_falls_back_to_raw() -> None:
+    """An unparseable encoded-word keeps the raw string — never worse
+    than the pre-fix behavior."""
+    raw = (
+        b"Message-ID: <bad-enc@example.invalid>\r\n"
+        b"Date: Mon, 01 Feb 2026 10:00:00 +0000\r\n"
+        b"From: sender@example.invalid\r\n"
+        b"Subject: =?nosuchcharset-xyz?Q?abc=E9def?=\r\n"
+        b"\r\nbody\r\n"
+    )
+    record = _parse_message(raw, folder_name="INBOX")
+    assert record["metadata"]["subject"]  # non-empty, no exception

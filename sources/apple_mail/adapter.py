@@ -23,6 +23,7 @@ exception messages.
 from __future__ import annotations
 
 import email
+import email.header
 import email.utils
 import imaplib
 import re
@@ -237,10 +238,10 @@ def _parse_message(raw: bytes, *, folder_name: str) -> dict[str, Any]:
         "content": content,
         "metadata": {
             "folder": folder_name,
-            "from": msg.get("From", "") or "",
-            "to": _split_address_list(msg.get("To", "")),
-            "cc": _split_address_list(msg.get("Cc", "")),
-            "subject": msg.get("Subject", "") or "",
+            "from": _decode_header_words(msg.get("From", "") or ""),
+            "to": [_decode_header_words(a) for a in _split_address_list(msg.get("To", ""))],
+            "cc": [_decode_header_words(a) for a in _split_address_list(msg.get("Cc", ""))],
+            "subject": _decode_header_words(msg.get("Subject", "") or ""),
             "message_id": message_id,
             "in_reply_to": (msg.get("In-Reply-To") or "").strip(),
             "references": _split_references(msg.get("References", "")),
@@ -249,6 +250,46 @@ def _parse_message(raw: bytes, *, folder_name: str) -> dict[str, Any]:
             "date_synthesized": date_synthesized,
         },
     }
+
+
+def _decode_header_words(value: str) -> str:
+    """Decode RFC 2047 encoded-words (``=?utf-8?Q?...?=`` / ``?B?``) to text.
+
+    Subjects and address display-names arrive transfer-encoded on real
+    mailboxes (Q and B forms; utf-8 / US-ASCII / Cp1252 / windows-1252
+    charsets; names split across adjacent encoded-words). Left raw, the
+    encoded bytes are opaque to every sanitize layer — regex, NER, and
+    the known-surface sweep all miss names hidden inside them, and the
+    PII surfaces only when a downstream consumer decodes for display.
+    Decoding here mirrors the adapter's existing body handling (QP and
+    base64 bodies are already decoded per source-adapters.md) so the
+    sanitize stage sees the same text a human would.
+
+    Malformed encoded-words fall back to the raw string — same
+    visibility the sanitizer has today, so never worse.
+    """
+    if not value or "=?" not in value:
+        return value
+    try:
+        parts = email.header.decode_header(value)
+    except Exception:
+        return value
+    decoded: list[str] = []
+    for data, charset in parts:
+        if isinstance(data, str):
+            decoded.append(data)
+            continue
+        for cs in (charset, "utf-8", "latin-1"):
+            if not cs:
+                continue
+            try:
+                decoded.append(data.decode(cs))
+                break
+            except (LookupError, UnicodeDecodeError):
+                continue
+        else:
+            decoded.append(data.decode("latin-1", errors="replace"))
+    return "".join(decoded)
 
 
 def _resolve_timestamp(msg: Message) -> tuple[str, bool]:
