@@ -140,6 +140,20 @@ def test_known_person_sweep_is_case_sensitive_and_word_bounded() -> None:
     assert out == "Coffee with [PERSON_1] — he will bring the Willows book."
 
 
+def test_known_person_sweep_crosses_underscore_boundaries() -> None:
+    """A mapped surname fused to snake_case must still be swept.
+
+    Regex \\b treats "_" as a word character, so the old \\b-bounded sweep
+    missed "smith_Hartwell.docx" (empirical leak: a surname inside a
+    filename in metadata.path). Underscores must count as boundaries;
+    mid-word matches ("Hartwells") must still be refused.
+    """
+    m = Mapping()
+    token = m.get_or_assign("PERSON", "Hartwell")
+    out = _sub_known_entities("see smith_Hartwell.docx and Hartwells Ferry", m, KeepList())
+    assert out == f"see smith_{token}.docx and Hartwells Ferry"
+
+
 def test_known_org_substituted_without_ner_context() -> None:
     """A mapped ORG is swept even where NER misses it — keeps content and
     metadata consistent (empirical leak: an event title's '@ <org>' suffix

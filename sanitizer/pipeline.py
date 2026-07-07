@@ -277,7 +277,15 @@ def _sub_known_entities(text: str, mapping: Mapping, keep: KeepList) -> str:
                     surfaces[surface] = token
         if surfaces:
             alternation = "|".join(re.escape(s) for s in sorted(surfaces, key=len, reverse=True))
-            _KNOWN_ENTITIES_CACHE[cache_key] = re.compile(rf"\b(?:{alternation})\b")
+            # Custom boundaries instead of \b: regex counts "_" as a word
+            # character, so \bHartwell\b can't see a surname fused to an
+            # underscore in snake_case filenames ("smith_Hartwell.docx" —
+            # audit-found leak in a metadata path). Alphanumeric-only
+            # lookarounds treat "_" as a boundary while still refusing
+            # mid-word matches ("Willows").
+            _KNOWN_ENTITIES_CACHE[cache_key] = re.compile(
+                rf"(?<![A-Za-z0-9])(?:{alternation})(?![A-Za-z0-9])"
+            )
         else:
             _KNOWN_ENTITIES_CACHE[cache_key] = None
     pattern = _KNOWN_ENTITIES_CACHE[cache_key]
