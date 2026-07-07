@@ -140,6 +140,24 @@ def test_known_person_sweep_is_case_sensitive_and_word_bounded() -> None:
     assert out == "Coffee with [PERSON_1] — he will bring the Willows book."
 
 
+def test_known_sweep_never_rewrites_existing_tokens() -> None:
+    """A mapped surface that collides with token vocabulary must not
+    rewrite the inside of an already-substituted token.
+
+    NER once mapped the literal word "LOCATION" as an ORG; with
+    underscore-as-boundary matching, the sweep then corrupted
+    "[LOCATION_490]" into "[[ORG_1]_490]" (audit-found). Tokens must pass
+    through whole; stoplisted junk surfaces must not be swept in prose
+    either.
+    """
+    m = Mapping()
+    m.get_or_assign("ORG", "LOCATION")
+    m.get_or_assign("ORG", "Phone")
+    text = "Meet at [LOCATION_490] tomorrow. Phone: [PHONE_12]. See [REDACTED_PERSONAL]."
+    out = _sub_known_entities(text, m, KeepList())
+    assert out == text
+
+
 def test_known_person_sweep_crosses_underscore_boundaries() -> None:
     """A mapped surname fused to snake_case must still be swept.
 

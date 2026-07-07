@@ -244,6 +244,21 @@ _KNOWN_ENTITIES_CACHE: dict[
     tuple[int, tuple[int, ...], frozenset[str]], re.Pattern[str] | None
 ] = {}
 
+# An already-substituted pseudonym or redaction token. Matched as an
+# alternative branch in the sweep regex and passed through untouched, so a
+# mapped surface can never rewrite the inside of a token — NER once mapped
+# the literal word "LOCATION" as an ORG, and the sweep then corrupted
+# "[LOCATION_490]" into "[[ORG_494]_490]" (audit-found).
+_TOKEN_SHAPE = r"\[[A-Z][A-Z_]*(?:_\d+)?\]"
+
+# NER false positives that collide with token vocabulary and generic field
+# labels ("Phone: ...", "Email: ..."). They stay in the mapping (pseudonym
+# stability) but the sweep must never substitute them — doing so mangles
+# contact-card labels and, pre-token-guard, the tokens themselves.
+_SWEEP_STOPLIST = frozenset(
+    {"person", "org", "organization", "location", "email", "phone", "address", "redacted"}
+)
+
 
 def _sub_known_entities(text: str, mapping: Mapping, keep: KeepList) -> str:
     """Replace already-mapped PERSON/ORG surfaces by literal word-boundary match.
@@ -273,18 +288,25 @@ def _sub_known_entities(text: str, mapping: Mapping, keep: KeepList) -> str:
         surfaces: dict[str, str] = {}
         for kind in reversed(_KNOWN_SWEEP_KINDS):  # earlier kinds overwrite later
             for surface, token in mapping.entries(kind).items():
-                if len(surface) >= 3 and surface not in keep.names and surface not in keep.gpes:
+                if (
+                    len(surface) >= 3
+                    and surface.casefold() not in _SWEEP_STOPLIST
+                    and surface not in keep.names
+                    and surface not in keep.gpes
+                ):
                     surfaces[surface] = token
         if surfaces:
             alternation = "|".join(re.escape(s) for s in sorted(surfaces, key=len, reverse=True))
-            # Custom boundaries instead of \b: regex counts "_" as a word
-            # character, so \bHartwell\b can't see a surname fused to an
-            # underscore in snake_case filenames ("smith_Hartwell.docx" —
-            # audit-found leak in a metadata path). Alphanumeric-only
-            # lookarounds treat "_" as a boundary while still refusing
-            # mid-word matches ("Willows").
+            # Branch 1 captures existing tokens so they pass through whole —
+            # the surface branch can never match inside one. Custom
+            # boundaries instead of \b on the surface branch: regex counts
+            # "_" as a word character, so \bHartwell\b can't see a surname
+            # fused to an underscore in snake_case filenames
+            # ("smith_Hartwell.docx" — audit-found leak in a metadata
+            # path). Alphanumeric-only lookarounds treat "_" as a boundary
+            # while still refusing mid-word matches ("Willows").
             _KNOWN_ENTITIES_CACHE[cache_key] = re.compile(
-                rf"(?<![A-Za-z0-9])(?:{alternation})(?![A-Za-z0-9])"
+                rf"({_TOKEN_SHAPE})|(?<![A-Za-z0-9])(?:{alternation})(?![A-Za-z0-9])"
             )
         else:
             _KNOWN_ENTITIES_CACHE[cache_key] = None
@@ -294,7 +316,7 @@ def _sub_known_entities(text: str, mapping: Mapping, keep: KeepList) -> str:
     lookup: dict[str, str] = {}
     for kind in reversed(_KNOWN_SWEEP_KINDS):
         lookup.update(mapping.entries(kind))
-    return pattern.sub(lambda m: lookup[m.group(0)], text)
+    return pattern.sub(lambda m: m.group(1) or lookup[m.group(0)], text)
 
 
 def _scrub_personal_strings(text: str, scrub_strings: frozenset[str]) -> str:
