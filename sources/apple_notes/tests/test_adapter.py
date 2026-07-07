@@ -39,6 +39,8 @@ def _make_synthetic_db(path: Path, notes: list[dict]) -> None:
             ZTITLE2 TEXT,
             ZSNIPPET TEXT,
             ZCREATIONDATE1 REAL,
+            ZCREATIONDATE2 REAL,
+            ZCREATIONDATE3 REAL,
             ZMODIFICATIONDATE1 REAL,
             ZISPASSWORDPROTECTED INTEGER,
             ZMARKEDFORDELETION INTEGER,
@@ -63,9 +65,10 @@ def _make_synthetic_db(path: Path, notes: list[dict]) -> None:
             """
             INSERT INTO ZICCLOUDSYNCINGOBJECT
             (ZIDENTIFIER, ZTITLE1, ZTITLE2, ZSNIPPET, ZCREATIONDATE1,
-             ZMODIFICATIONDATE1, ZISPASSWORDPROTECTED, ZMARKEDFORDELETION,
+             ZCREATIONDATE2, ZCREATIONDATE3, ZMODIFICATIONDATE1,
+             ZISPASSWORDPROTECTED, ZMARKEDFORDELETION,
              ZFOLDER, ZACCOUNT4, ZNOTEDATA, ZNAME)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 n.get("identifier"),
@@ -73,6 +76,8 @@ def _make_synthetic_db(path: Path, notes: list[dict]) -> None:
                 n.get("folder_title"),
                 n.get("snippet"),
                 n.get("created"),
+                n.get("created2"),
+                n.get("created3"),
                 n.get("modified"),
                 n.get("is_locked", 0),
                 n.get("deleted", 0),
@@ -96,15 +101,68 @@ def _gzip_protobuf_like(text: str) -> bytes:
 
 def test_apple_epoch_to_iso_seconds_format() -> None:
     """Notes timestamps are seconds since 2001-01-01 UTC."""
-    out = _apple_epoch_to_iso(0)
-    assert out == _APPLE_EPOCH.isoformat()
     one_year = _APPLE_EPOCH + timedelta(days=365)
     out = _apple_epoch_to_iso(365 * 24 * 3600)
     assert out == one_year.isoformat()
 
 
-def test_apple_epoch_to_iso_handles_none() -> None:
-    assert _apple_epoch_to_iso(None) == _APPLE_EPOCH.isoformat()
+def test_apple_epoch_to_iso_null_is_none_not_epoch() -> None:
+    """NULL/zero must yield None, not the epoch — an epoch-stamped record
+    silently impersonates a real 2001-01-01 note (audit-found on every
+    note when the creation column migrated to ZCREATIONDATE3)."""
+    assert _apple_epoch_to_iso(None) is None
+    assert _apple_epoch_to_iso(0) is None
+
+
+def test_extract_notes_reads_migrated_creation_column(tmp_path: Path) -> None:
+    """When ZCREATIONDATE1 is NULL and the real value lives in
+    ZCREATIONDATE3 (current NoteStore schema), the record must carry the
+    ZCREATIONDATE3 date — not the 2001 epoch."""
+    db = tmp_path / "test.sqlite"
+    _make_synthetic_db(
+        db,
+        [
+            {
+                "identifier": "note-uuid-migrated",
+                "title": "Migrated note",
+                "snippet": "s",
+                "created": None,
+                "created3": 366 * 24 * 3600,
+                "modified": 366 * 24 * 3600,
+                "folder_pk": None,
+                "account_pk": None,
+                "body_blob": _gzip_protobuf_like("body text"),
+            },
+        ],
+    )
+    records = list(extract_notes(db))
+    assert len(records) == 1
+    expected = (_APPLE_EPOCH + timedelta(days=366)).isoformat()
+    assert records[0]["timestamp"] == expected
+
+
+def test_extract_notes_undated_note_has_none_timestamp(tmp_path: Path) -> None:
+    """A note with every date column NULL is emitted with timestamp None —
+    visibly undated rather than epoch-stamped."""
+    db = tmp_path / "test.sqlite"
+    _make_synthetic_db(
+        db,
+        [
+            {
+                "identifier": "note-uuid-undated",
+                "title": "Undated note",
+                "snippet": "s",
+                "created": None,
+                "modified": None,
+                "folder_pk": None,
+                "account_pk": None,
+                "body_blob": _gzip_protobuf_like("body text"),
+            },
+        ],
+    )
+    records = list(extract_notes(db))
+    assert len(records) == 1
+    assert records[0]["timestamp"] is None
 
 
 def test_decode_note_body_extracts_longest_run() -> None:

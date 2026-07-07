@@ -84,7 +84,7 @@ def extract_notes(snapshot_path: Path) -> Iterator[dict[str, Any]]:
     conn = sqlite3.connect(uri, uri=True)
     conn.row_factory = sqlite3.Row
     try:
-        for row in conn.execute(_QUERY):
+        for row in conn.execute(_build_query(conn)):
             record = _row_to_record(row)
             if record is not None:
                 yield record
@@ -98,19 +98,25 @@ def extract_notes(snapshot_path: Path) -> Iterator[dict[str, Any]]:
 #   ZICNOTEDATA — only notes have a body blob.
 # - ZTITLE1 is the note title (folders use ZTITLE2; we read both via the
 #   join and pick the right one per record).
-# - ZCREATIONDATE1 / ZMODIFICATIONDATE1 are Cocoa-reference timestamps.
+# - Creation/modification timestamps are Cocoa-reference. Apple's schema
+#   has migrated the live creation column several times: on current
+#   NoteStore versions ZCREATIONDATE1 is NULL for every note and the real
+#   value lives in ZCREATIONDATE3 (audit-found: all 763 notes were emitted
+#   as the 2001-01-01 epoch). Column availability varies by macOS version,
+#   so _build_query COALESCEs across whichever generations exist in the
+#   snapshot, newest first.
 # - ZIDENTIFIER is a UUID-style identifier stable across syncs — used as
 #   the source_id so re-runs are dedupe-friendly.
 # - ZACCOUNT4 / ZFOLDER may be NULL on default-account local notes; we
 #   tolerate either.
-_QUERY = """
+_QUERY_TEMPLATE = """
 SELECT
     n.Z_PK                         AS rowid,
     n.ZIDENTIFIER                  AS identifier,
     n.ZTITLE1                      AS title,
     n.ZSNIPPET                     AS snippet,
-    n.ZCREATIONDATE1               AS created_apple,
-    n.ZMODIFICATIONDATE1           AS modified_apple,
+    {created_expr}                 AS created_apple,
+    {modified_expr}                AS modified_apple,
     n.ZISPASSWORDPROTECTED         AS is_locked,
     n.ZMARKEDFORDELETION           AS deleted,
     f.ZTITLE2                      AS folder_name,
@@ -121,8 +127,31 @@ LEFT JOIN ZICCLOUDSYNCINGOBJECT f  ON n.ZFOLDER = f.Z_PK
 LEFT JOIN ZICCLOUDSYNCINGOBJECT a  ON n.ZACCOUNT4 = a.Z_PK
 LEFT JOIN ZICNOTEDATA d            ON n.ZNOTEDATA = d.Z_PK
 WHERE n.ZNOTEDATA IS NOT NULL
-ORDER BY n.ZCREATIONDATE1 ASC
+ORDER BY created_apple ASC
 """
+
+# Preference order: newest schema generation first.
+_CREATED_COLUMNS = ("ZCREATIONDATE3", "ZCREATIONDATE2", "ZCREATIONDATE1", "ZCREATIONDATE")
+_MODIFIED_COLUMNS = ("ZMODIFICATIONDATE1", "ZMODIFICATIONDATE")
+
+
+def _coalesce_expr(available: set[str], preferred: tuple[str, ...]) -> str:
+    cols = [f"n.{c}" for c in preferred if c in available]
+    if not cols:
+        return "NULL"
+    if len(cols) == 1:
+        return cols[0]
+    return f"COALESCE({', '.join(cols)})"
+
+
+def _build_query(conn: sqlite3.Connection) -> str:
+    available = {
+        str(row[1]) for row in conn.execute("PRAGMA table_info(ZICCLOUDSYNCINGOBJECT)")
+    }
+    return _QUERY_TEMPLATE.format(
+        created_expr=_coalesce_expr(available, _CREATED_COLUMNS),
+        modified_expr=_coalesce_expr(available, _MODIFIED_COLUMNS),
+    )
 
 
 def _row_to_record(row: sqlite3.Row) -> dict[str, Any] | None:
@@ -144,8 +173,14 @@ def _row_to_record(row: sqlite3.Row) -> dict[str, Any] | None:
         # fails entirely. Better than dropping the note.
         body = snippet
 
+    # Fall back to the modification date when creation is NULL across every
+    # schema generation; emit None when both are missing so the note is
+    # visibly undated (and excluded from windowed runs) instead of silently
+    # impersonating a real 2001-01-01 entry.
     timestamp = _apple_epoch_to_iso(row["created_apple"])
     modified = _apple_epoch_to_iso(row["modified_apple"])
+    if timestamp is None:
+        timestamp = modified
 
     # Title isn't always populated — Apple Notes uses the first line of
     # the body as the title when the user hasn't named the note. Mirror
@@ -174,19 +209,24 @@ def _row_to_record(row: sqlite3.Row) -> dict[str, Any] | None:
     }
 
 
-def _apple_epoch_to_iso(value: float | int | None) -> str:
+def _apple_epoch_to_iso(value: float | int | None) -> str | None:
     """Convert Apple Cocoa-reference timestamp to ISO 8601 UTC.
 
     Notes' timestamps are seconds (float) since 2001-01-01 UTC. Unlike
     iMessage which uses nanoseconds post-Mojave, Notes consistently uses
     seconds.
+
+    Returns ``None`` for NULL/zero/garbage values. Returning the epoch
+    itself (the old behavior) made undated notes impersonate real
+    2001-01-01 entries — audit-found on every note when the creation
+    column migrated out from under the query.
     """
     if value is None or value == 0:
-        return _APPLE_EPOCH.isoformat()
+        return None
     try:
         seconds = float(value)
     except (TypeError, ValueError):
-        return _APPLE_EPOCH.isoformat()
+        return None
     return (_APPLE_EPOCH + timedelta(seconds=seconds)).isoformat()
 
 
