@@ -166,7 +166,7 @@ The filesystem-level gate between raw and clean staging.
 - Document exact commands in `docs/account-split.md`: creating `openclaw`, ACLs on `/raw-staging` and `/clean-staging`, moving CC agent invocation under `openclaw`
 - Verification script: attempts to read `/raw-staging` from `openclaw`, expects failure
 
-**Done when:** running the verification script under `openclaw` fails to read raw data, and running it under `juliajacobs` succeeds.
+**Done when:** running the verification script under `openclaw` fails to read raw data, and running it under `youruser` succeeds.
 
 ---
 
@@ -220,7 +220,7 @@ that benefits every source: ``labeled_gov_id`` now catches ``Insured``
 ``promote-eobs`` (and ``eobs`` aggregate).
 
 M7 notes: `docs/account-split.md` documents the full
-juliajacobs↔openclaw boundary on macOS — ACL chain on home →
+youruser↔openclaw boundary on macOS — ACL chain on home →
 projects → pii-data-sanitizer to grant openclaw read on
 `clean-staging/` only, `chmod -R go-rwx` on `raw-staging/` and
 `mapping/`, sudoers entry for password-free `sudo -u openclaw`.

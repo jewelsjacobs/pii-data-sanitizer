@@ -324,7 +324,7 @@ def _scrub_personal_strings(text: str, scrub_strings: frozenset[str]) -> str:
     ``scrub_strings`` to ``[REDACTED_PERSONAL]``.
 
     Strings are sorted longest-first so that overlapping entries (e.g.
-    "juliajacobs" vs "julia") match the most specific form first. The
+    "janedoe" vs "jane") match the most specific form first. The
     match is whole-string (no regex semantics) for predictability —
     if you need pattern-based scrubbing, use the rules layer instead.
 

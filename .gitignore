@@ -48,3 +48,5 @@ tests/fixtures/ground-truth/*
 
 # Local pipeline config — real paths, self-identity, keep-list.
 config/local.json
+# Backups of the local config carry the same real paths / identity.
+config/local.json.*

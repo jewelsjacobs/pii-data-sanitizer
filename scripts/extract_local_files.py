@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 from scripts._config import LocalConfig, load_config
@@ -107,7 +108,18 @@ def main(argv: list[str] | None = None) -> int:
             "source-adapters.md → Open Items. The check runs before any file "
             "is opened, so legacy formats and broken encodings in the "
             "untouched archive can't halt a windowed run. Match this to the "
-            "sanitize step's --since (both compare UTC dates)."
+            "sanitize step's --since (both compare UTC dates). When omitted, "
+            "defaults to the last successful run's date from "
+            "<out-dir>/state.json (see --full)."
+        ),
+    )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help=(
+            "Ignore <out-dir>/state.json and walk everything, rewriting the "
+            "raw file from scratch. Only suppresses the state-file default; "
+            "an explicit --modified-since still wins."
         ),
     )
     args = parser.parse_args(argv)
@@ -143,22 +155,85 @@ def main(argv: list[str] | None = None) -> int:
     out_dir = args.out_dir if args.out_dir else cfg.raw_staging_dir / "local-files"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_file = out_dir / "events.jsonl"
+    state_path = out_dir / "state.json"
+
+    # Config-level exclude names (node_modules, .git, …) merge with any
+    # --exclude-dir-name flags; duplicates are harmless but pruned for tidy
+    # output in the mode line below.
+    exclude_dir_names = list(args.exclude_dir_name)
+    for name in cfg.local_files_exclude_dir_names:
+        if name not in exclude_dir_names:
+            exclude_dir_names.append(name)
+
+    # Incremental by default: an omitted --modified-since falls back to the
+    # date of the last successful run, so `make extract` never re-walks the
+    # whole archive (and never re-opens the legacy files buried in it).
+    modified_since = args.modified_since
+    defaulted_from_state = False
+    if modified_since is None and not args.full and state_path.exists():
+        try:
+            last_run_at = json.loads(state_path.read_text())["last_run_at"]
+            modified_since = validate_since(last_run_at[:10])
+            defaulted_from_state = True
+        except (json.JSONDecodeError, KeyError, argparse.ArgumentTypeError):
+            print(
+                f"warning: {state_path} is unreadable; doing a full walk. "
+                "Delete the file to silence this.",
+                file=sys.stderr,
+            )
+    if defaulted_from_state:
+        print(
+            f"mode: incremental --modified-since {modified_since} "
+            f"(from {state_path.name}; pass --full for a complete rewalk)"
+        )
+
+    # A windowed run appends to the raw file and dedupes by source_id, the
+    # same contract sanitize's --since uses one layer down — so the raw
+    # JSONL stays complete and a later full sanitize can't lose history.
+    existing_ids: set[str] = set()
+    if modified_since is not None and out_file.exists():
+        for line in out_file.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                existing_ids.add(json.loads(line)["source_id"])
+            except (json.JSONDecodeError, KeyError):
+                continue
+        print(f"mode: append+dedupe ({len(existing_ids)} existing records preserved)")
 
     count = 0
-    with out_file.open("w") as fout:
+    skipped_dupes = 0
+    open_mode = "a" if existing_ids else "w"
+    with out_file.open(open_mode) as fout:
         for record in extract_files(
             source_dirs,
             include_extensions=args.include_extensions,
             skip_unsupported=args.skip_unsupported,
             continue_on_error=args.continue_on_error,
             exclude_dirs=args.exclude_dir,
-            exclude_dir_names=args.exclude_dir_name,
-            modified_since=args.modified_since,
+            exclude_dir_names=exclude_dir_names,
+            modified_since=modified_since,
         ):
+            if record.get("source_id") in existing_ids:
+                skipped_dupes += 1
+                continue
             fout.write(json.dumps(record) + "\n")
             count += 1
 
-    print(f"Extracted {count} local-files record(s) → {out_file}")
+    state_path.write_text(
+        json.dumps(
+            {
+                "last_run_at": datetime.now(UTC).isoformat(timespec="seconds"),
+                "modified_since_used": modified_since,
+                "records_written": count,
+            },
+            indent=2,
+        )
+        + "\n"
+    )
+
+    dedupe_note = f" ({skipped_dupes} already in raw file, skipped)" if skipped_dupes else ""
+    print(f"Extracted {count} local-files record(s){dedupe_note} → {out_file}")
     return 0
 
 

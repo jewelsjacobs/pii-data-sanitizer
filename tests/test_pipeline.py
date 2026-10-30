@@ -361,12 +361,12 @@ def test_long_content_does_not_hang() -> None:
 
 def test_scrub_strings_redacts_all_occurrences() -> None:
     """Configured strings get hard-redacted everywhere, regardless of context."""
-    identity = SelfIdentity(scrub_strings=frozenset({"juliajacobs"}))
+    identity = SelfIdentity(scrub_strings=frozenset({"janedoe"}))
     rec = _record(
-        "/Users/juliajacobs/Documents/note.md and ~juliajacobs/.zshrc and JuliaJacobs again."
+        "/Users/janedoe/Documents/note.md and ~janedoe/.zshrc and JaneDoe again."
     )
     out = sanitize(rec, self_identity=identity)
-    assert "juliajacobs" not in out["content"].lower()
+    assert "janedoe" not in out["content"].lower()
     # All three occurrences (mixed casing) get the same token
     assert out["content"].count("[REDACTED_PERSONAL]") == 3
 
@@ -379,12 +379,12 @@ def test_scrub_strings_case_insensitive() -> None:
 
 
 def test_scrub_strings_longest_first_match() -> None:
-    """If both 'juliajacobs' and 'julia' are configured, the longer wins."""
-    identity = SelfIdentity(scrub_strings=frozenset({"julia", "juliajacobs"}))
-    rec = _record("juliajacobs is the username, but julia is the name.")
+    """If both 'janedoe' and 'julia' are configured, the longer wins."""
+    identity = SelfIdentity(scrub_strings=frozenset({"jane", "janedoe"}))
+    rec = _record("janedoe is the username, but jane is the name.")
     out = sanitize(rec, self_identity=identity)
-    # "juliajacobs" should not be split as [REDACTED_PERSONAL]jacobs
-    assert "[REDACTED_PERSONAL]jacobs" not in out["content"]
+    # "janedoe" should not be split as [REDACTED_PERSONAL]doe
+    assert "[REDACTED_PERSONAL]doe" not in out["content"]
     assert out["content"].count("[REDACTED_PERSONAL]") == 2
 
 

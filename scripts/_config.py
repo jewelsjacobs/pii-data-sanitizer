@@ -21,6 +21,10 @@ EXAMPLE_CONFIG_PATH = Path("config/local.example.json")
 class LocalConfig:
     ical_source_dirs: list[Path] = field(default_factory=list)
     local_files_source_dirs: list[Path] = field(default_factory=list)
+    # Directory names pruned from every local-files walk (node_modules, .git,
+    # …) so dependency trees inside old code checkouts can't halt a run.
+    # Merged with any --exclude-dir-name flags at extract time.
+    local_files_exclude_dir_names: list[str] = field(default_factory=list)
     imessage_chat_db_path: Path | None = None
     apple_notes_db_path: Path | None = None
     self_emails: frozenset[str] = field(default_factory=frozenset)
@@ -32,7 +36,7 @@ class LocalConfig:
     # SSN / bank account, a macOS username appearing in file paths, a home
     # address number that NER won't recognize). Hard-redacted to
     # ``[REDACTED_PERSONAL]`` regardless of surrounding text. Stored
-    # case-folded internally so both casings of "Juliajacobs" / "juliajacobs"
+    # case-folded internally so both casings of "Janedoe" / "janedoe"
     # match. Some over-redaction (a "1234" that isn't your SSN-last-4) is
     # acceptable — much better than a real leak.
     scrub_strings: frozenset[str] = field(default_factory=frozenset)
@@ -58,6 +62,7 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> LocalConfig:
     return LocalConfig(
         ical_source_dirs=[Path(p) for p in data.get("ical_source_dirs", [])],
         local_files_source_dirs=[Path(p) for p in data.get("local_files_source_dirs", [])],
+        local_files_exclude_dir_names=list(data.get("local_files_exclude_dir_names", [])),
         imessage_chat_db_path=imessage_path,
         apple_notes_db_path=notes_path,
         self_emails=frozenset(e.strip().lower() for e in data.get("self_emails", [])),

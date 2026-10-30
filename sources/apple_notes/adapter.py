@@ -145,9 +145,7 @@ def _coalesce_expr(available: set[str], preferred: tuple[str, ...]) -> str:
 
 
 def _build_query(conn: sqlite3.Connection) -> str:
-    available = {
-        str(row[1]) for row in conn.execute("PRAGMA table_info(ZICCLOUDSYNCINGOBJECT)")
-    }
+    available = {str(row[1]) for row in conn.execute("PRAGMA table_info(ZICCLOUDSYNCINGOBJECT)")}
     return _QUERY_TEMPLATE.format(
         created_expr=_coalesce_expr(available, _CREATED_COLUMNS),
         modified_expr=_coalesce_expr(available, _MODIFIED_COLUMNS),
