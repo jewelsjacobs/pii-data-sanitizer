@@ -200,11 +200,20 @@ def main(argv: list[str] | None = None) -> int:
                 keep=keep,
             )
             after = _mapping_sizes(mapping)
+            grew = False
             for kind, size in after.items():
                 delta = size - before.get(kind, 0)
                 if delta > 0:
                     entity_counts[kind] += delta
                     new_assignments += delta
+                    grew = True
+            # Persist new pseudonym assignments BEFORE the record that uses
+            # them hits the clean file. Otherwise a crash between here and
+            # the periodic save leaves tokens in events.jsonl that the
+            # on-disk mapping never learned, and the next run hands the
+            # same token to a different person (issue #1).
+            if grew:
+                mapping.save(cfg.mapping_path)
             fout.write(json.dumps(sanitized) + "\n")
             fout.flush()  # so `wc -l` on the output file shows progress
             records_out += 1

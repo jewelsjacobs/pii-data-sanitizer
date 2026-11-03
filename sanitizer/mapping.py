@@ -14,6 +14,7 @@ ephemeral in-memory mapping or a temp-file JSON.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Self
 
@@ -66,7 +67,14 @@ class Mapping:
         return m
 
     def save(self, path: Path) -> None:
-        path.write_text(json.dumps(self.to_dict(), indent=2, sort_keys=True))
+        """Write atomically: a kill mid-write must not truncate the JSON.
+
+        Serialize to a sibling temp file, then ``os.replace`` it over the
+        target so readers only ever see the old file or the complete new one.
+        """
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(self.to_dict(), indent=2, sort_keys=True))
+        os.replace(tmp, path)
 
     @classmethod
     def load(cls, path: Path) -> Self:
